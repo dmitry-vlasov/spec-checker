@@ -31,8 +31,12 @@ colored = "2"
 # Glob patterns for file discovery
 glob = "0.3"
 
-# Regex for pattern matching
+# Regex for pattern matching (Solidity fallback)
 regex = "1"
+
+# Rust AST parsing
+syn = { version = "2", features = ["full", "parsing", "visit"] }
+quote = "1"
 
 [dev-dependencies]
 tempfile = "3"
