@@ -13,9 +13,8 @@ exposes:
       - Returns appropriate extractor
       - Returns error for unsupported language
 
-depends_on:
-  - solidity
-  - rust
+# No internal module dependencies - solidity/rust are submodules, not deps
+depends_on: []
 
 external_deps:
   - anyhow
