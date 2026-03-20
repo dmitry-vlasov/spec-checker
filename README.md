@@ -59,13 +59,31 @@ invariants:
 - **depends_on** - allowed module dependencies
 - **forbidden_deps** - banned dependencies
 
-### Phase 2
-- **layer** - infrastructure/domain/application/interface
-- **events** - emits/subscribes
+### Phase 2 ✅
+- **layer** - infrastructure/domain/application/interface (with violation detection)
+- **events** - emits/subscribes (spec only, not yet checked)
 
 ### Phase 3
 - **state ownership** - owns_state, reads_state, modifies
 - **access control** - callable_by, roles
+
+## Layer Rules
+
+Architectural layers enforce dependency direction:
+
+```
+Interface → Application → Domain → Infrastructure
+```
+
+- **Infrastructure**: Cannot depend on Domain/Application/Interface
+- **Domain**: Can only depend on Infrastructure
+- **Application**: Can depend on Domain and Infrastructure
+- **Interface**: Can depend on anything
+
+Example violation:
+```
+✗ Layer violation: 'src/infra.rs' (Infrastructure) cannot depend on 'src/domain.rs' (Domain)
+```
 
 ## Supported Languages
 
@@ -125,14 +143,14 @@ PASSED: 11 warning(s)
 ### Done
 - [x] YAML spec parser
 - [x] CLI with `check`, `init`, `diff` commands
-- [x] Solidity extractor (regex-based)
-- [x] Rust extractor (regex-based)
+- [x] Solidity extractor (solc AST + regex fallback)
+- [x] Rust extractor (syn AST)
 - [x] Self-specification in `specs/`
+- [x] Layer violation detection
+- [x] Filter test dependencies from warnings
 
 ### In Progress
 - [ ] Return type extraction in signatures
-- [ ] Filter test dependencies from warnings
-- [ ] Layer violation detection
 
 ### Planned
 - [ ] GitHub Actions integration

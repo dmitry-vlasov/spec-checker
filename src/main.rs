@@ -90,7 +90,8 @@ fn cmd_check(spec_path: &PathBuf, source_root: &PathBuf, _format: &str) -> Resul
         return Ok(());
     }
 
-    let checker = SpecChecker::new(source_root.clone());
+    // Build checker with layer map from all specs
+    let checker = SpecChecker::new(source_root.clone()).with_specs(&specs);
     let mut total_errors = 0;
     let mut total_warnings = 0;
 

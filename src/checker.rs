@@ -1,8 +1,9 @@
 use anyhow::Result;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::extractors::{get_extractor, ExtractedModule};
-use crate::spec::ModuleSpec;
+use crate::spec::{Layer, ModuleSpec};
 
 /// Result of checking a spec against implementation
 #[derive(Debug, Default)]
@@ -30,11 +31,26 @@ impl CheckResult {
 /// Specification checker
 pub struct SpecChecker {
     source_root: PathBuf,
+    /// Map of module source_path to layer (built from all specs)
+    layer_map: HashMap<String, Layer>,
 }
 
 impl SpecChecker {
     pub fn new(source_root: PathBuf) -> Self {
-        Self { source_root }
+        Self {
+            source_root,
+            layer_map: HashMap::new(),
+        }
+    }
+
+    /// Build layer map from all specs for cross-module layer checking
+    pub fn with_specs(mut self, specs: &[ModuleSpec]) -> Self {
+        for spec in specs {
+            if let (Some(source_path), Some(layer)) = (&spec.source_path, &spec.layer) {
+                self.layer_map.insert(source_path.clone(), *layer);
+            }
+        }
+        self
     }
 
     /// Check a spec against its implementation
@@ -84,8 +100,33 @@ impl SpecChecker {
         self.check_internal(spec, &extracted, &mut result);
         self.check_dependencies(spec, &extracted, &mut result);
         self.check_forbidden_deps(spec, &extracted, &mut result);
+        self.check_layer_violations(spec, &mut result);
 
         Ok(result)
+    }
+
+    /// Check for layer violations in dependencies
+    fn check_layer_violations(&self, spec: &ModuleSpec, result: &mut CheckResult) {
+        let my_layer = match &spec.layer {
+            Some(layer) => layer,
+            None => return, // No layer specified, skip check
+        };
+
+        for dep_path in &spec.depends_on {
+            // Look up the dependency's layer
+            if let Some(dep_layer) = self.layer_map.get(dep_path) {
+                if !my_layer.can_depend_on(dep_layer) {
+                    result.error(format!(
+                        "Layer violation: '{}' ({:?}) cannot depend on '{}' ({:?})",
+                        spec.source_path.as_deref().unwrap_or(&spec.module),
+                        my_layer,
+                        dep_path,
+                        dep_layer
+                    ));
+                }
+            }
+            // If dependency not in layer_map, it might be external or unspecified - skip
+        }
     }
 
     /// Check that all exposed functions exist in implementation
@@ -186,7 +227,7 @@ impl SpecChecker {
     /// "src/extractors/mod.rs" -> "extractors"
     fn extract_module_name(path: &str) -> String {
         let path = path.trim_end_matches(".rs");
-        
+
         // Handle mod.rs case: "src/extractors/mod" -> "extractors"
         if path.ends_with("/mod") {
             return path
@@ -196,7 +237,7 @@ impl SpecChecker {
                 .unwrap_or(path)
                 .to_string();
         }
-        
+
         // Regular case: "src/checker" -> "checker"
         path.rsplit('/').next().unwrap_or(path).to_string()
     }
@@ -389,6 +430,96 @@ contract Bridge {
         let spec = create_test_spec();
 
         let result = checker.check(&spec).unwrap();
+
+        assert!(
+            result.is_ok(),
+            "Expected no errors but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_check_layer_violation() {
+        let dir = TempDir::new().unwrap();
+
+        // Create two source files
+        let infra_content = r#"
+pub fn infra_function() {}
+"#;
+        let domain_content = r#"
+use infra;
+pub fn domain_function() {}
+"#;
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/infra.rs"), infra_content).unwrap();
+        std::fs::write(dir.path().join("src/domain.rs"), domain_content).unwrap();
+
+        // Infrastructure module that depends on domain (VIOLATION!)
+        let infra_spec = ModuleSpec {
+            module: "infra".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/infra.rs".to_string()),
+            layer: Some(Layer::Infrastructure),
+            depends_on: vec!["src/domain.rs".to_string()], // Infrastructure depending on Domain!
+            ..Default::default()
+        };
+
+        // Domain module
+        let domain_spec = ModuleSpec {
+            module: "domain".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/domain.rs".to_string()),
+            layer: Some(Layer::Domain),
+            ..Default::default()
+        };
+
+        let specs = vec![infra_spec.clone(), domain_spec];
+        let checker = SpecChecker::new(dir.path().to_path_buf()).with_specs(&specs);
+
+        let result = checker.check(&infra_spec).unwrap();
+
+        assert!(
+            !result.is_ok(),
+            "Expected layer violation error but got none"
+        );
+        assert!(
+            result.errors.iter().any(|e| e.contains("Layer violation")),
+            "Expected 'Layer violation' error but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_check_layer_valid() {
+        let dir = TempDir::new().unwrap();
+
+        // Create source files
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/infra.rs"), "pub fn f() {}").unwrap();
+        std::fs::write(dir.path().join("src/domain.rs"), "pub fn f() {}").unwrap();
+
+        // Domain depending on Infrastructure (valid)
+        let domain_spec = ModuleSpec {
+            module: "domain".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/domain.rs".to_string()),
+            layer: Some(Layer::Domain),
+            depends_on: vec!["src/infra.rs".to_string()],
+            ..Default::default()
+        };
+
+        let infra_spec = ModuleSpec {
+            module: "infra".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/infra.rs".to_string()),
+            layer: Some(Layer::Infrastructure),
+            ..Default::default()
+        };
+
+        let specs = vec![domain_spec.clone(), infra_spec];
+        let checker = SpecChecker::new(dir.path().to_path_buf()).with_specs(&specs);
+
+        let result = checker.check(&domain_spec).unwrap();
 
         assert!(
             result.is_ok(),
