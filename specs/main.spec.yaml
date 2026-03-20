@@ -17,9 +17,9 @@ internal:
   - detect_language
 
 depends_on:
-  - checker
-  - extractors
-  - spec
+  - checker             # src/checker.rs
+  - extractors/mod      # src/extractors/mod.rs
+  - spec                # src/spec.rs
 
 external_deps:
   - clap

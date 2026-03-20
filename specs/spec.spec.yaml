@@ -13,7 +13,7 @@ exposes:
 internal: []
 
 depends_on:
-  - extractors
+  - extractors/mod      # uses ExtractedModule type
 
 external_deps:
   - serde
