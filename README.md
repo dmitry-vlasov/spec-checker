@@ -23,26 +23,37 @@ Human intent → Spec (human-sized) → Checker → Code (AI-sized)
 Unified YAML format for both structural and behavioral specifications:
 
 ```yaml
-module Bridge:
-  language: Solidity
-  exposes:
-    deposit:
-      signature: (address token, uint256 amount, bytes32 receiver)
-      requires: [amount > 0, token in allowed_tokens]
-      ensures: [deposited' == deposited + amount]
-    withdraw:
-      requires: [valid_signature, not already_executed]
-      ensures: [withdrawn' <= deposited]
-  internal: [_verifySignature, _executeTransfer]
-  depends_on: [TokenRegistry, SignerRegistry]
-  forbidden_deps: [TestUtils]
-  invariants:
-    - forall token: withdrawn[token] <= deposited[token]
+module: Bridge
+language: solidity
+source_path: contracts/Bridge.sol
+
+exposes:
+  deposit:
+    signature: "(address token, uint256 amount, bytes32 receiver)"
+    requires: [amount > 0, token in allowed_tokens]
+    ensures: [deposited' == deposited + amount]
+  withdraw:
+    requires: [valid_signature, not already_executed]
+    ensures: [withdrawn' <= deposited]
+
+internal:
+  - _verifySignature
+  - _executeTransfer
+
+depends_on:
+  - TokenRegistry
+  - SignerRegistry
+
+forbidden_deps:
+  - TestUtils
+
+invariants:
+  - "forall token: withdrawn[token] <= deposited[token]"
 ```
 
 ## Property Categories
 
-### Phase 1 (MVP)
+### Phase 1 (MVP) ✅
 - **exposes** - public functions that must exist
 - **internal** - private functions (shouldn't be exposed)
 - **depends_on** - allowed module dependencies
@@ -58,10 +69,11 @@ module Bridge:
 
 ## Supported Languages
 
-- **Solidity**: Uses `solc --ast-json` for extraction
-- **Rust**: Uses `cargo metadata` + `syn` crate
-- **TypeScript**: Uses `tsc` API
-- **Fallback**: `tree-sitter` for unsupported languages
+| Language | Extractor | Status |
+|----------|-----------|--------|
+| Solidity | Regex (solc AST fallback) | ✅ Working |
+| Rust | Regex | ✅ Working |
+| TypeScript | - | Planned |
 
 ## Installation
 
@@ -75,33 +87,57 @@ cargo install --path .
 # Check all specs in a directory
 spec-checker check ./specs
 
-# Check a single module
-spec-checker check ./specs/Bridge.spec.yaml
+# Check a single module against source root
+spec-checker check ./specs/main.spec.yaml --source ./src
 
 # Generate spec skeleton from existing code
-spec-checker init --language solidity ./contracts/Bridge.sol
+spec-checker init --language rust ./src/main.rs
 
 # Diff: show spec vs implementation discrepancies
-spec-checker diff ./specs/Bridge.spec.yaml ./contracts/Bridge.sol
+spec-checker diff ./specs/main.spec.yaml ./src/main.rs
 ```
 
-## Development Phases
+## Self-Verification
 
-### MVP (Weeks 1-2)
-- [ ] Structural checker for Solidity (`solc --ast-json`)
-- [ ] YAML spec parser
-- [ ] CLI with `check`, `init`, `diff` commands
-- [ ] GitHub Actions integration
+The spec-checker verifies its own structure:
 
-### Phase 2 (Weeks 3-4)
-- [ ] Rust support (`cargo metadata` + `syn`)
+```bash
+$ spec-checker check ./specs -s .
+
+Spec Checker
+========================================
+
+Checking: main
+  ✓ All checks passed
+
+Checking: checker
+  ⚠ Function 'check' signature mismatch...
+
+Checking: extractors
+  ✓ All checks passed
+
+========================================
+PASSED: 11 warning(s)
+```
+
+## Development Status
+
+### Done
+- [x] YAML spec parser
+- [x] CLI with `check`, `init`, `diff` commands
+- [x] Solidity extractor (regex-based)
+- [x] Rust extractor (regex-based)
+- [x] Self-specification in `specs/`
+
+### In Progress
+- [ ] Return type extraction in signatures
+- [ ] Filter test dependencies from warnings
 - [ ] Layer violation detection
-- [ ] Event emission checking
 
-### Phase 3 (Month 2)
-- [ ] Behavioral checker (runtime assertions)
-- [ ] Fuzz test generation from requires/ensures
+### Planned
+- [ ] GitHub Actions integration
 - [ ] TypeScript support
+- [ ] Behavioral checker (runtime assertions)
 
 ## License
 
