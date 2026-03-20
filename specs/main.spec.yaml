@@ -1,0 +1,35 @@
+# Spec Checker - Main CLI module
+
+module: main
+language: rust
+source_path: src/main.rs
+
+# No public functions - main() is the entry point but not pub fn
+# CLI is exposed via clap derive macros on Cli struct
+exposes: {}
+
+internal:
+  - cmd_check
+  - cmd_init
+  - cmd_diff
+  - load_specs
+  - load_spec
+  - detect_language
+
+depends_on:
+  - checker
+  - extractors
+  - spec
+
+external_deps:
+  - clap
+  - serde_yaml
+  - anyhow
+  - colored
+  - glob
+
+forbidden_deps:
+  - test
+  - mock
+
+layer: interface

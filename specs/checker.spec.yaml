@@ -1,0 +1,29 @@
+# Spec Checker - Checker module
+
+module: checker
+language: rust
+source_path: src/checker.rs
+
+exposes:
+  check:
+    signature: "(&self, spec: &ModuleSpec) -> Result<CheckResult>"
+    requires:
+      - spec has valid module name
+    ensures:
+      - Returns errors for missing exposed functions
+      - Returns errors for exposed internal functions
+      - Returns errors for forbidden dependencies
+      - Returns warnings for unlisted dependencies
+
+internal:
+  - check_exposes
+  - check_internal
+  - check_dependencies
+  - check_forbidden_deps
+  - find_source_file
+
+depends_on:
+  - extractors
+  - spec
+
+layer: domain

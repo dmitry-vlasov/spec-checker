@@ -1,0 +1,23 @@
+# Spec Checker - Spec module (data structures)
+
+module: spec
+language: rust
+source_path: src/spec.rs
+
+exposes:
+  from_extracted:
+    signature: "(extracted: &ExtractedModule) -> Self"
+    ensures:
+      - Creates ModuleSpec from extracted implementation
+
+internal: []
+
+depends_on:
+  - extractors
+
+layer: domain
+
+invariants:
+  - Layer dependencies are acyclic
+  - Infrastructure cannot depend on Domain/Application/Interface
+  - Domain cannot depend on Application/Interface

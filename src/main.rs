@@ -79,7 +79,7 @@ fn main() -> Result<()> {
 }
 
 fn cmd_check(spec_path: &PathBuf, source_root: &PathBuf, _format: &str) -> Result<()> {
-    println!("{}", "AllSet Spec Checker".bold().cyan());
+    println!("{}", "Spec Checker".bold().cyan());
     println!("{}", "=".repeat(40));
     println!();
 

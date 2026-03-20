@@ -1,0 +1,20 @@
+# Spec Checker - Extractors module
+
+module: extractors
+language: rust
+source_path: src/extractors/mod.rs
+
+exposes:
+  get_extractor:
+    signature: "(language: &str) -> Result<Box<dyn Extractor>>"
+    requires:
+      - language is "solidity", "rust", or alias
+    ensures:
+      - Returns appropriate extractor
+      - Returns error for unsupported language
+
+depends_on:
+  - solidity
+  - rust
+
+layer: infrastructure
