@@ -101,8 +101,43 @@ impl SpecChecker {
         self.check_dependencies(spec, &extracted, &mut result);
         self.check_forbidden_deps(spec, &extracted, &mut result);
         self.check_layer_violations(spec, &mut result);
+        self.check_events(spec, &extracted, &mut result);
 
         Ok(result)
+    }
+
+    /// Check that specified events exist in implementation
+    fn check_events(
+        &self,
+        spec: &ModuleSpec,
+        extracted: &ExtractedModule,
+        result: &mut CheckResult,
+    ) {
+        // Check emits - events the spec says should be defined
+        for event in &spec.emits {
+            if !extracted.events.contains(event) {
+                result.error(format!(
+                    "Event '{}' is specified in emits but not found in implementation",
+                    event
+                ));
+            }
+        }
+
+        // Check for events defined in implementation but not in spec
+        if !spec.emits.is_empty() {
+            for event in &extracted.events {
+                if !spec.emits.contains(event) {
+                    result.warning(format!(
+                        "Event '{}' is defined in implementation but not in emits spec",
+                        event
+                    ));
+                }
+            }
+        }
+
+        // Note: subscribes checking would require analyzing function bodies
+        // to see what events are being listened to - this is more complex
+        // and language-specific, so we skip it for now
     }
 
     /// Check for layer violations in dependencies
@@ -525,6 +560,75 @@ pub fn domain_function() {}
             result.is_ok(),
             "Expected no errors but got: {:?}",
             result.errors
+        );
+    }
+
+    #[test]
+    fn test_check_events_missing() {
+        let dir = TempDir::new().unwrap();
+
+        // Solidity contract with only one event
+        let content = r#"
+contract Bridge {
+    event Deposited(address token, uint256 amount);
+    
+    function deposit(address token, uint256 amount) public {}
+}
+"#;
+        std::fs::write(dir.path().join("Bridge.sol"), content).unwrap();
+
+        // Spec expects two events
+        let spec = ModuleSpec {
+            module: "Bridge".to_string(),
+            language: Some("solidity".to_string()),
+            source_path: Some("Bridge.sol".to_string()),
+            emits: vec!["Deposited".to_string(), "Withdrawn".to_string()],
+            ..Default::default()
+        };
+
+        let checker = SpecChecker::new(dir.path().to_path_buf());
+        let result = checker.check(&spec).unwrap();
+
+        assert!(!result.is_ok(), "Expected error for missing event");
+        assert!(
+            result.errors.iter().any(|e| e.contains("Withdrawn")),
+            "Expected error about 'Withdrawn' event but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_check_events_extra() {
+        let dir = TempDir::new().unwrap();
+
+        // Solidity contract with two events
+        let content = r#"
+contract Bridge {
+    event Deposited(address token, uint256 amount);
+    event Withdrawn(address token, uint256 amount);
+    
+    function deposit(address token, uint256 amount) public {}
+}
+"#;
+        std::fs::write(dir.path().join("Bridge.sol"), content).unwrap();
+
+        // Spec only lists one event
+        let spec = ModuleSpec {
+            module: "Bridge".to_string(),
+            language: Some("solidity".to_string()),
+            source_path: Some("Bridge.sol".to_string()),
+            emits: vec!["Deposited".to_string()],
+            ..Default::default()
+        };
+
+        let checker = SpecChecker::new(dir.path().to_path_buf());
+        let result = checker.check(&spec).unwrap();
+
+        // Should have warning for extra event
+        assert!(
+            result.warnings.iter().any(|w| w.contains("Withdrawn")),
+            "Expected warning about 'Withdrawn' event not in spec but got: {:?}",
+            result.warnings
         );
     }
 }

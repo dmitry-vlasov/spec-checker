@@ -61,7 +61,7 @@ invariants:
 
 ### Phase 2 ✅
 - **layer** - infrastructure/domain/application/interface (with violation detection)
-- **events** - emits/subscribes (spec only, not yet checked)
+- **events** - emits (checked), subscribes (spec only)
 
 ### Phase 3
 - **state ownership** - owns_state, reads_state, modifies
@@ -149,9 +149,10 @@ PASSED: 11 warning(s)
 - [x] Layer violation detection
 - [x] Filter test dependencies from warnings
 - [x] Return type extraction in signatures
+- [x] Events checking (emits)
 
 ### In Progress
-- [ ] Events checking (emits/subscribes)
+- [ ] Subscribes checking (requires function body analysis)
 
 ### Planned
 - [ ] GitHub Actions integration
