@@ -1,0 +1,44 @@
+[package]
+name = "allset-spec-checker"
+version = "0.1.0"
+edition = "2021"
+description = "Structural and behavioral specification checker for AllSet"
+license = "Apache-2.0"
+repository = "https://github.com/fastxyz/allset-spec-checker"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# YAML parsing
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Async (for future features)
+tokio = { version = "1", features = ["full"] }
+
+# File watching (for future features)
+# notify = "6"
+
+# Colored output
+colored = "2"
+
+# Glob patterns for file discovery
+glob = "0.3"
+
+# Regex for pattern matching
+regex = "1"
+
+[dev-dependencies]
+tempfile = "3"
+assert_cmd = "2"
+predicates = "3"
+
+[[bin]]
+name = "allset-spec-checker"
+path = "src/main.rs"

@@ -1,0 +1,121 @@
+# AllSet Bridge Contract Specification
+# This is the source of truth for the Bridge module's public interface and dependencies
+
+module: Bridge
+language: solidity
+source_path: bridge/evm/contracts/Bridge.sol
+
+# Public interface - these functions MUST exist and be public/external
+exposes:
+  deposit:
+    signature: "(address wethAddress, address token, uint256 amount, bytes32 fastReceiver)"
+    requires:
+      - amount > 0
+      - token is supported (mapped in tokenMappings)
+    ensures:
+      - Deposited event emitted
+      - Token transferred from sender to Bridge
+    emits:
+      - Deposited
+
+  withdraw:
+    signature: "(bytes memory encodedTransferClaim, bytes memory transferProof, bytes memory encodedIntentClaim, bytes memory intentProof)"
+    requires:
+      - Valid signature from authorized signer
+      - Transfer not already executed
+      - Token is mapped
+    ensures:
+      - TransferExecuted or TransferRevoked event emitted
+      - Token transferred to recipient (if executed)
+    emits:
+      - TransferExecuted
+      - TransferRevoked
+
+  setTokensMapping:
+    signature: "(bytes32 fastSetToken, address chainToken)"
+    requires:
+      - Caller is owner
+    ensures:
+      - tokenMappings updated
+      - depositableTokens updated
+    emits:
+      - TokenMappingSet
+
+  setFastSetAddress:
+    signature: "(bytes32 fastSetAddress)"
+    requires:
+      - Caller is owner
+    ensures:
+      - fastSetAddress updated
+
+  setMintableBridgeTokens:
+    signature: "(address[] memory mintableTokens)"
+    requires:
+      - Caller is owner
+    ensures:
+      - All tokens marked as mintable
+
+  setSigner:
+    signature: "(address newSigner)"
+    requires:
+      - Caller is owner
+    ensures:
+      - signer updated
+
+# Internal functions - these should NOT be public
+internal:
+  - _verifyAndDecodeTransferClaim
+  - _verifyAndDecodeIntentClaim
+  - _executeTransfer
+  - _revokeTransfer
+  - _authorizeUpgrade
+
+# Allowed dependencies
+depends_on:
+  - IERC20
+  - IWETH9
+  - WSETToken
+  - OwnableUpgradeable
+  - UUPSUpgradeable
+  - ReentrancyGuardUpgradeable
+  - FiatTokenV1
+
+# Forbidden dependencies (test utils, mocks, etc.)
+forbidden_deps:
+  - Test
+  - Mock
+  - console
+  - Vm
+
+# External packages allowed
+external_deps:
+  - "@openzeppelin/contracts-upgradeable"
+  - "@openzeppelin/contracts"
+  - "fastset-rust-sdk"
+
+# Architectural layer
+layer: infrastructure
+
+# Module-level invariants
+invariants:
+  - "forall token: total_withdrawn[token] <= total_deposited[token]"
+  - "A completed transfer cannot be revoked"
+  - "A revoked transfer cannot be executed"
+  - "Transfer state is exactly one of: pending, executed, revoked"
+  - "Only authorized signer can sign valid withdrawal proofs"
+
+# Events this module emits
+emits:
+  - Deposited
+  - TransferExecuted
+  - TransferRevoked
+  - TokenMappingSet
+
+# State variables owned
+owns_state:
+  - tokenMappings
+  - fastSetAddress
+  - signer
+  - executedTransfers
+  - depositableTokens
+  - mintableBridgeTokens
