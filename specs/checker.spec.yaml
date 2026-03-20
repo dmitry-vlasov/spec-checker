@@ -4,7 +4,29 @@ module: checker
 language: rust
 source_path: src/checker.rs
 
+# Architectural attributes
+layer: application       # Changed: application layer orchestrates domain + infrastructure
+context: core
+stability: stable
+
 exposes:
+  new:
+    signature: "(source_root: PathBuf) -> Self"
+    ensures:
+      - Creates checker with default built-in rules
+
+  with_specs:
+    signature: "(self, specs: &[ModuleSpec]) -> Self"
+    ensures:
+      - Builds spec map for cross-module checking
+      - Enables layer/context/stability validation
+
+  with_rules_config:
+    signature: "(self, config: &RulesConfig) -> Self"
+    ensures:
+      - Removes disabled built-in rules
+      - Adds custom rules from config
+
   check:
     signature: "(&self, spec: &ModuleSpec) -> Result<CheckResult>"
     requires:
@@ -13,28 +35,36 @@ exposes:
       - Returns errors for missing exposed functions
       - Returns errors for exposed internal functions
       - Returns errors for forbidden dependencies
+      - Returns errors for architectural rule violations
       - Returns warnings for unlisted dependencies
-
-  with_specs:
-    signature: "(self, specs: &[ModuleSpec]) -> Self"
-    ensures:
-      - Builds layer map from all specs for cross-module checking
+      - Returns warnings for undocumented events
 
 internal:
   - check_exposes
   - check_internal
   - check_dependencies
   - check_forbidden_deps
-  - check_layer_violations
+  - check_architectural_constraints
+  - check_events
   - find_source_file
   - extract_module_name
 
 depends_on:
   - src/extractors/mod.rs
   - src/spec.rs
+  - src/rules.rs
 
 external_deps:
   - anyhow
   - tempfile
 
-layer: domain
+forbidden_deps:
+  - clap          # CLI concerns belong in main
+  - colored       # output formatting belongs in main
+  - syn           # AST parsing belongs in extractors
+  - regex         # pattern matching belongs in extractors
+
+invariants:
+  - "Errors are always more severe than warnings"
+  - "check() never panics, returns Result"
+  - "All built-in rules can be disabled via config"

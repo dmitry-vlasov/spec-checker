@@ -1,0 +1,68 @@
+# Spec Checker - Rules module (DSL engine)
+
+module: rules
+language: rust
+source_path: src/rules.rs
+
+# Architectural attributes
+layer: domain
+context: core
+stability: stable
+
+exposes:
+  builtin_rules:
+    signature: "() -> Vec<Rule>"
+    ensures:
+      - Returns layer-direction rule
+      - Returns context-isolation rule  
+      - Returns stability-direction rule
+
+  check_dependency:
+    signature: "(source: &ModuleSpec, target: &ModuleSpec, rules: &[Rule]) -> Vec<RuleViolation>"
+    requires:
+      - rules is not empty
+    ensures:
+      - Evaluates each rule's 'when' condition
+      - For matching rules, evaluates 'require' condition
+      - Returns violation for each unsatisfied require
+
+  evaluate:
+    signature: "(expr: &str, ctx: &EvalContext) -> Result<bool, String>"
+    requires:
+      - expr is valid DSL expression
+    ensures:
+      - Evaluates boolean expressions
+      - Supports AND, OR, NOT operators
+      - Supports ==, != comparisons
+      - Supports property access (source.X, target.X)
+      - Supports can_depend_on method calls
+      - Supports exists checks
+
+internal:
+  - eval_value
+  - eval_module_property
+  - eval_can_depend_on
+  - eval_exists
+  - split_binary_op
+  - parse_layer_literal
+  - parse_stability_literal
+  - default_when
+
+# Data structures: Rule, RulesConfig, Severity, EvalContext, RuleViolation
+
+depends_on:
+  - src/spec.rs
+
+external_deps:
+  - serde
+
+forbidden_deps:
+  - syn           # rules module doesn't parse code
+  - regex         # DSL uses hand-written parser
+  - anyhow        # uses Result<T, String> for simplicity
+
+invariants:
+  - "evaluate() handles malformed expressions gracefully"
+  - "Built-in rules use the same DSL as custom rules"
+  - "Rules are evaluated in order"
+  - "All violations are collected, not short-circuited"

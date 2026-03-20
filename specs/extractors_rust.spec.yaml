@@ -1,0 +1,49 @@
+# Spec Checker - Rust Extractor
+
+module: rust
+language: rust
+source_path: src/extractors/rust.rs
+
+# Architectural attributes
+layer: infrastructure
+context: core
+stability: stable
+
+exposes:
+  # Note: signature check may show mismatch due to test code in string literals
+  new:
+    ensures:
+      - Creates RustExtractor instance
+
+# Implements Extractor trait (via impl block, not pub fn):
+#   extract(&self, path: &PathBuf) -> Result<ExtractedModule>
+
+internal:
+  - format_fn_signature
+  - format_method_signature
+  - format_signature
+  - flatten_use_tree
+  - get_root_crate
+  - is_public
+
+# RustVisitor struct for AST traversal
+
+depends_on: []
+
+external_deps:
+  - anyhow
+  - syn           # Rust AST parsing
+  - quote         # token stream handling
+
+forbidden_deps:
+  - regex         # use syn for proper parsing
+  - serde_json    # Solidity-specific
+  - clap          # no CLI concerns
+
+invariants:
+  - "Uses syn for proper AST parsing (not regex)"
+  - "Extracts: functions, structs, impl methods, use statements"
+  - "Flattens nested use trees: use a::{b::{c, d}} -> [a::b::c, a::b::d]"
+  - "Filters test modules (#[cfg(test)])"
+  - "Filters internal imports (crate::, super::)"
+  - "Extracts return types from function signatures"

@@ -1,0 +1,46 @@
+# Spec Checker - Solidity Extractor
+
+module: solidity
+language: rust
+source_path: src/extractors/solidity.rs
+
+# Architectural attributes
+layer: infrastructure
+context: core
+stability: stable
+
+exposes:
+  new:
+    signature: "() -> Self"
+    ensures:
+      - Creates SolidityExtractor instance
+
+# Implements Extractor trait (via impl block, not pub fn):
+#   extract(&self, path: &PathBuf) -> Result<ExtractedModule>
+
+internal:
+  - parse_solidity_ast
+  - parse_solidity_regex
+  - extract_from_solc_output
+  - extract_from_ast_node
+  - extract_from_node
+  - format_function_signature
+
+depends_on: []
+
+external_deps:
+  - anyhow
+  - serde
+  - serde_json
+  - regex         # fallback when solc unavailable
+
+forbidden_deps:
+  - syn           # Rust-specific
+  - clap          # no CLI concerns
+  - serde_yaml    # no YAML parsing
+
+invariants:
+  - "Uses solc AST when available, regex as fallback"
+  - "Extracts: functions, events, imports, state variables, modifiers"
+  - "Identifies visibility: public, external, internal, private"
+  - "Extracts return types from function signatures"

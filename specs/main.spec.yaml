@@ -4,6 +4,11 @@ module: main
 language: rust
 source_path: src/main.rs
 
+# Architectural attributes
+layer: interface
+context: cli
+stability: normal
+
 # No public functions - main() is the entry point but not pub fn
 # CLI is exposed via clap derive macros on Cli struct
 exposes: {}
@@ -20,6 +25,7 @@ depends_on:
   - src/checker.rs
   - src/extractors/mod.rs
   - src/spec.rs
+  - src/rules.rs
 
 external_deps:
   - clap
@@ -29,7 +35,10 @@ external_deps:
   - glob
 
 forbidden_deps:
-  - test
-  - mock
+  - tempfile     # test-only dependency
+  - syn          # should go through extractors
+  - regex        # should go through extractors
 
-layer: interface
+invariants:
+  - "CLI always returns exit code 1 on validation errors"
+  - "All output goes to stdout (errors to stderr)"

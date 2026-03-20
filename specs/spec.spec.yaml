@@ -4,23 +4,38 @@ module: spec
 language: rust
 source_path: src/spec.rs
 
+# Architectural attributes
+layer: domain
+context: core
+stability: stable
+
 exposes:
   from_extracted:
     signature: "(extracted: &ExtractedModule) -> Self"
     ensures:
       - Creates ModuleSpec from extracted implementation
+      - Populates exposes from public_functions
+      - Populates internal from private_functions
+      - Populates emits from events
 
 internal: []
 
+# Data structures exposed (not functions, but types)
+# ModuleSpec, FunctionSpec, Layer, Stability
+
 depends_on:
-  - src/extractors/mod.rs
+  - src/extractors/mod.rs    # Uses ExtractedModule type
 
 external_deps:
   - serde
 
-layer: domain
+forbidden_deps:
+  - syn           # belongs in extractors
+  - regex         # belongs in extractors
 
 invariants:
-  - Layer dependencies are acyclic
-  - Infrastructure cannot depend on Domain/Application/Interface
-  - Domain cannot depend on Application/Interface
+  - "Layer dependencies are acyclic"
+  - "Infrastructure cannot depend on Domain/Application/Interface"
+  - "Domain cannot depend on Application/Interface"
+  - "Stable cannot depend on Normal or Volatile"
+  - "Normal cannot depend on Volatile"

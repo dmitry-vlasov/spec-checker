@@ -1,0 +1,21 @@
+# Spec Checker - Project Rules
+# These rules define the architectural constraints for this project
+
+rules:
+  # Core modules must be stable
+  - name: core-stability
+    description: "Core context modules must have stable stability"
+    when: "source.context == core AND source.stability.exists"
+    require: "source.stability == stable"
+    severity: error
+
+  # CLI can depend on anything (it's the entry point)
+  # but nothing should depend on CLI
+  - name: no-depend-on-cli
+    description: "Non-CLI modules should not depend on CLI module"
+    when: "target.context == cli AND source.context != cli"
+    require: "false"
+    severity: error
+
+# Keep all built-in rules enabled
+disable_builtin: []

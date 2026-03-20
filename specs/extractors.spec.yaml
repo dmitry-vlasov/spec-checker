@@ -4,14 +4,23 @@ module: extractors
 language: rust
 source_path: src/extractors/mod.rs
 
+# Architectural attributes
+layer: infrastructure
+context: core            # Changed: core context, same as spec/rules/checker
+stability: stable
+
 exposes:
   get_extractor:
     signature: "(language: &str) -> Result<Box<dyn Extractor>>"
     requires:
       - language is "solidity", "rust", or alias
     ensures:
-      - Returns appropriate extractor
+      - Returns SolidityExtractor for solidity/sol
+      - Returns RustExtractor for rust/rs
       - Returns error for unsupported language
+
+# Trait: Extractor with extract() method
+# Struct: ExtractedModule
 
 depends_on:
   - src/extractors/solidity.rs
@@ -20,4 +29,12 @@ depends_on:
 external_deps:
   - anyhow
 
-layer: infrastructure
+forbidden_deps:
+  - clap          # no CLI concerns
+  - colored       # no output formatting
+  - serde_yaml    # no YAML parsing
+
+invariants:
+  - "Extractors never modify source files"
+  - "Extraction is deterministic for same input"
+  - "Failed extraction returns error, never panics"
