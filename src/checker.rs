@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::extractors::{get_extractor, ExtractedModule};
-use crate::spec::{Layer, ModuleSpec};
+use crate::spec::{Layer, ModuleSpec, Stability};
 
 /// Result of checking a spec against implementation
 #[derive(Debug, Default)]
@@ -28,26 +28,41 @@ impl CheckResult {
     }
 }
 
+/// Module metadata for architectural checks
+#[derive(Debug, Clone)]
+struct ModuleMetadata {
+    layer: Option<Layer>,
+    context: Option<String>,
+    stability: Option<Stability>,
+}
+
 /// Specification checker
 pub struct SpecChecker {
     source_root: PathBuf,
-    /// Map of module source_path to layer (built from all specs)
-    layer_map: HashMap<String, Layer>,
+    /// Map of module source_path to metadata (built from all specs)
+    module_map: HashMap<String, ModuleMetadata>,
 }
 
 impl SpecChecker {
     pub fn new(source_root: PathBuf) -> Self {
         Self {
             source_root,
-            layer_map: HashMap::new(),
+            module_map: HashMap::new(),
         }
     }
 
-    /// Build layer map from all specs for cross-module layer checking
+    /// Build module metadata map from all specs for cross-module checking
     pub fn with_specs(mut self, specs: &[ModuleSpec]) -> Self {
         for spec in specs {
-            if let (Some(source_path), Some(layer)) = (&spec.source_path, &spec.layer) {
-                self.layer_map.insert(source_path.clone(), *layer);
+            if let Some(source_path) = &spec.source_path {
+                self.module_map.insert(
+                    source_path.clone(),
+                    ModuleMetadata {
+                        layer: spec.layer,
+                        context: spec.context.clone(),
+                        stability: spec.stability,
+                    },
+                );
             }
         }
         self
@@ -100,7 +115,7 @@ impl SpecChecker {
         self.check_internal(spec, &extracted, &mut result);
         self.check_dependencies(spec, &extracted, &mut result);
         self.check_forbidden_deps(spec, &extracted, &mut result);
-        self.check_layer_violations(spec, &mut result);
+        self.check_architectural_constraints(spec, &mut result);
         self.check_events(spec, &extracted, &mut result);
 
         Ok(result)
@@ -140,27 +155,55 @@ impl SpecChecker {
         // and language-specific, so we skip it for now
     }
 
-    /// Check for layer violations in dependencies
-    fn check_layer_violations(&self, spec: &ModuleSpec, result: &mut CheckResult) {
-        let my_layer = match &spec.layer {
-            Some(layer) => layer,
-            None => return, // No layer specified, skip check
-        };
+    /// Check all architectural constraints (layer, context, stability)
+    fn check_architectural_constraints(&self, spec: &ModuleSpec, result: &mut CheckResult) {
+        let source_path = spec.source_path.as_deref().unwrap_or(&spec.module);
 
         for dep_path in &spec.depends_on {
-            // Look up the dependency's layer
-            if let Some(dep_layer) = self.layer_map.get(dep_path) {
+            let dep_meta = match self.module_map.get(dep_path) {
+                Some(meta) => meta,
+                None => continue, // External or unspecified dependency - skip
+            };
+
+            // Layer check: vertical stratification
+            if let (Some(my_layer), Some(dep_layer)) = (&spec.layer, &dep_meta.layer) {
                 if !my_layer.can_depend_on(dep_layer) {
                     result.error(format!(
                         "Layer violation: '{}' ({:?}) cannot depend on '{}' ({:?})",
-                        spec.source_path.as_deref().unwrap_or(&spec.module),
-                        my_layer,
-                        dep_path,
-                        dep_layer
+                        source_path, my_layer, dep_path, dep_layer
                     ));
                 }
             }
-            // If dependency not in layer_map, it might be external or unspecified - skip
+
+            // Context check: horizontal isolation
+            // Cross-context dependencies must go through interface layer
+            if let (Some(my_context), Some(dep_context)) = (&spec.context, &dep_meta.context) {
+                if my_context != dep_context {
+                    // Cross-context dependency
+                    let my_layer = spec.layer.unwrap_or(Layer::Domain);
+                    let dep_layer = dep_meta.layer.unwrap_or(Layer::Domain);
+
+                    // Either source or target must be at interface layer
+                    if my_layer != Layer::Interface && dep_layer != Layer::Interface {
+                        result.error(format!(
+                            "Context violation: '{}' (context: {}) cannot directly depend on '{}' (context: {}). Cross-context dependencies must go through Interface layer.",
+                            source_path, my_context, dep_path, dep_context
+                        ));
+                    }
+                }
+            }
+
+            // Stability check: stable shouldn't depend on volatile
+            if let (Some(my_stability), Some(dep_stability)) =
+                (&spec.stability, &dep_meta.stability)
+            {
+                if !my_stability.can_depend_on(dep_stability) {
+                    result.error(format!(
+                        "Stability violation: '{}' ({:?}) cannot depend on '{}' ({:?}). Stable modules cannot depend on less stable ones.",
+                        source_path, my_stability, dep_path, dep_stability
+                    ));
+                }
+            }
         }
     }
 
@@ -629,6 +672,170 @@ contract Bridge {
             result.warnings.iter().any(|w| w.contains("Withdrawn")),
             "Expected warning about 'Withdrawn' event not in spec but got: {:?}",
             result.warnings
+        );
+    }
+
+    #[test]
+    fn test_check_context_violation() {
+        let dir = TempDir::new().unwrap();
+
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/payments.rs"), "pub fn pay() {}").unwrap();
+        std::fs::write(dir.path().join("src/users.rs"), "pub fn user() {}").unwrap();
+
+        // Payments domain module trying to directly depend on Users domain module
+        let payments_spec = ModuleSpec {
+            module: "payments".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/payments.rs".to_string()),
+            layer: Some(Layer::Domain),
+            context: Some("payments".to_string()),
+            depends_on: vec!["src/users.rs".to_string()],
+            ..Default::default()
+        };
+
+        let users_spec = ModuleSpec {
+            module: "users".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/users.rs".to_string()),
+            layer: Some(Layer::Domain),
+            context: Some("users".to_string()),
+            ..Default::default()
+        };
+
+        let specs = vec![payments_spec.clone(), users_spec];
+        let checker = SpecChecker::new(dir.path().to_path_buf()).with_specs(&specs);
+
+        let result = checker.check(&payments_spec).unwrap();
+
+        assert!(!result.is_ok(), "Expected context violation error");
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("Context violation")),
+            "Expected 'Context violation' error but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_check_context_via_interface() {
+        let dir = TempDir::new().unwrap();
+
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/payments_api.rs"), "pub fn pay() {}").unwrap();
+        std::fs::write(dir.path().join("src/users_api.rs"), "pub fn api() {}").unwrap();
+
+        // Payments interface depending on Users interface (allowed - both at interface layer)
+        let payments_api_spec = ModuleSpec {
+            module: "payments_api".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/payments_api.rs".to_string()),
+            layer: Some(Layer::Interface),
+            context: Some("payments".to_string()),
+            depends_on: vec!["src/users_api.rs".to_string()],
+            ..Default::default()
+        };
+
+        let users_api_spec = ModuleSpec {
+            module: "users_api".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/users_api.rs".to_string()),
+            layer: Some(Layer::Interface),
+            context: Some("users".to_string()),
+            ..Default::default()
+        };
+
+        let specs = vec![payments_api_spec.clone(), users_api_spec];
+        let checker = SpecChecker::new(dir.path().to_path_buf()).with_specs(&specs);
+
+        let result = checker.check(&payments_api_spec).unwrap();
+
+        assert!(
+            result.is_ok(),
+            "Cross-context via interface should be allowed but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_check_stability_violation() {
+        let dir = TempDir::new().unwrap();
+
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/core.rs"), "pub fn core() {}").unwrap();
+        std::fs::write(dir.path().join("src/feature.rs"), "pub fn feature() {}").unwrap();
+
+        // Stable core depending on volatile feature (VIOLATION)
+        let core_spec = ModuleSpec {
+            module: "core".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/core.rs".to_string()),
+            stability: Some(Stability::Stable),
+            depends_on: vec!["src/feature.rs".to_string()],
+            ..Default::default()
+        };
+
+        let feature_spec = ModuleSpec {
+            module: "feature".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/feature.rs".to_string()),
+            stability: Some(Stability::Volatile),
+            ..Default::default()
+        };
+
+        let specs = vec![core_spec.clone(), feature_spec];
+        let checker = SpecChecker::new(dir.path().to_path_buf()).with_specs(&specs);
+
+        let result = checker.check(&core_spec).unwrap();
+
+        assert!(!result.is_ok(), "Expected stability violation error");
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("Stability violation")),
+            "Expected 'Stability violation' error but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_check_stability_valid() {
+        let dir = TempDir::new().unwrap();
+
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/feature.rs"), "pub fn feature() {}").unwrap();
+        std::fs::write(dir.path().join("src/core.rs"), "pub fn core() {}").unwrap();
+
+        // Volatile feature depending on stable core (allowed)
+        let feature_spec = ModuleSpec {
+            module: "feature".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/feature.rs".to_string()),
+            stability: Some(Stability::Volatile),
+            depends_on: vec!["src/core.rs".to_string()],
+            ..Default::default()
+        };
+
+        let core_spec = ModuleSpec {
+            module: "core".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/core.rs".to_string()),
+            stability: Some(Stability::Stable),
+            ..Default::default()
+        };
+
+        let specs = vec![feature_spec.clone(), core_spec];
+        let checker = SpecChecker::new(dir.path().to_path_buf()).with_specs(&specs);
+
+        let result = checker.check(&feature_spec).unwrap();
+
+        assert!(
+            result.is_ok(),
+            "Volatile depending on stable should be allowed but got: {:?}",
+            result.errors
         );
     }
 }

@@ -61,15 +61,19 @@ invariants:
 
 ### Phase 2 ✅
 - **layer** - infrastructure/domain/application/interface (with violation detection)
+- **context** - bounded contexts for horizontal isolation
+- **stability** - stable/normal/volatile (stable can't depend on volatile)
 - **events** - emits (checked), subscribes (spec only)
 
 ### Phase 3
 - **state ownership** - owns_state, reads_state, modifies
 - **access control** - callable_by, roles
 
-## Layer Rules
+## Architectural Concepts
 
-Architectural layers enforce dependency direction:
+The spec-checker enforces three orthogonal architectural constraints:
+
+### Layer (Vertical Stratification)
 
 ```
 Interface → Application → Domain → Infrastructure
@@ -80,7 +84,42 @@ Interface → Application → Domain → Infrastructure
 - **Application**: Can depend on Domain and Infrastructure
 - **Interface**: Can depend on anything
 
-Example violation:
+### Context (Horizontal Segmentation)
+
+Bounded contexts isolate different functional areas:
+
+```yaml
+context: payments   # or: users, bridge, verifier
+```
+
+**Rule**: Cross-context dependencies must go through the Interface layer.
+
+```
+✗ Context violation: 'src/payments.rs' (context: payments) cannot directly 
+  depend on 'src/users.rs' (context: users). Cross-context dependencies 
+  must go through Interface layer.
+```
+
+### Stability (Change Frequency)
+
+```yaml
+stability: stable   # or: normal, volatile
+```
+
+- **Stable**: Core abstractions, rarely change
+- **Normal**: Standard modules
+- **Volatile**: Features, frequently change
+
+**Rule**: Stable modules cannot depend on less stable ones.
+
+```
+✗ Stability violation: 'src/core.rs' (Stable) cannot depend on 
+  'src/feature.rs' (Volatile). Stable modules cannot depend on less stable ones.
+```
+
+## Example Violations
+
+Layer:
 ```
 ✗ Layer violation: 'src/infra.rs' (Infrastructure) cannot depend on 'src/domain.rs' (Domain)
 ```

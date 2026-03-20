@@ -41,9 +41,17 @@ pub struct ModuleSpec {
     #[serde(default)]
     pub forbidden_external: Vec<String>,
 
-    /// Architectural layer
+    /// Architectural layer (vertical stratification)
     #[serde(default)]
     pub layer: Option<Layer>,
+
+    /// Bounded context (horizontal segmentation)
+    #[serde(default)]
+    pub context: Option<String>,
+
+    /// Stability level (change frequency)
+    #[serde(default)]
+    pub stability: Option<Stability>,
 
     /// Module-level invariants
     #[serde(default)]
@@ -122,8 +130,6 @@ pub enum Layer {
 
 impl Layer {
     /// Check if this layer can depend on another layer.
-    /// Used for architectural validation (Phase 2).
-    #[allow(dead_code)]
     pub fn can_depend_on(&self, other: &Layer) -> bool {
         use Layer::*;
         match (self, other) {
@@ -139,6 +145,36 @@ impl Layer {
             (Infrastructure, _) => false,
             // Everything else is forbidden
             _ => false,
+        }
+    }
+}
+
+/// Stability levels (stable modules shouldn't depend on volatile ones)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Stability {
+    /// Core abstractions, rarely change
+    Stable,
+    /// Normal modules
+    Normal,
+    /// Features, frequently change
+    Volatile,
+}
+
+impl Stability {
+    /// Check if this stability level can depend on another.
+    /// Stable modules should not depend on volatile ones.
+    pub fn can_depend_on(&self, other: &Stability) -> bool {
+        use Stability::*;
+        match (self, other) {
+            // Stable can only depend on stable
+            (Stable, Stable) => true,
+            (Stable, _) => false,
+            // Normal can depend on stable or normal
+            (Normal, Volatile) => false,
+            (Normal, _) => true,
+            // Volatile can depend on anything
+            (Volatile, _) => true,
         }
     }
 }
@@ -168,6 +204,8 @@ impl ModuleSpec {
             external_deps: extracted.imports.clone(),
             forbidden_external: Vec::new(),
             layer: None,
+            context: None,
+            stability: None,
             invariants: Vec::new(),
             emits: extracted.events.clone(),
             subscribes: Vec::new(),
@@ -211,6 +249,26 @@ mod tests {
         assert!(Interface.can_depend_on(&Domain));
         assert!(Interface.can_depend_on(&Application));
         assert!(Interface.can_depend_on(&Interface));
+    }
+
+    #[test]
+    fn test_stability_dependencies() {
+        use Stability::*;
+
+        // Stable can only depend on stable
+        assert!(Stable.can_depend_on(&Stable));
+        assert!(!Stable.can_depend_on(&Normal));
+        assert!(!Stable.can_depend_on(&Volatile));
+
+        // Normal can depend on stable and normal
+        assert!(Normal.can_depend_on(&Stable));
+        assert!(Normal.can_depend_on(&Normal));
+        assert!(!Normal.can_depend_on(&Volatile));
+
+        // Volatile can depend on anything
+        assert!(Volatile.can_depend_on(&Stable));
+        assert!(Volatile.can_depend_on(&Normal));
+        assert!(Volatile.can_depend_on(&Volatile));
     }
 
     #[test]
