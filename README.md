@@ -117,6 +117,52 @@ stability: stable   # or: normal, volatile
   'src/feature.rs' (Volatile). Stable modules cannot depend on less stable ones.
 ```
 
+## Rule DSL
+
+Define custom architectural rules in a `rules.yaml` file:
+
+```yaml
+rules:
+  - name: no-test-depends-prod
+    description: "Test modules should not depend on production code"
+    when: "source.context == test"
+    require: "target.context == test OR target.stability == stable"
+    severity: warning
+
+  - name: core-must-be-stable  
+    description: "Core modules must have stable stability"
+    when: "source.context == core"
+    require: "source.stability == stable"
+    severity: error
+
+# Disable built-in rules if needed
+disable_builtin:
+  - layer-direction
+```
+
+Load custom rules:
+```bash
+spec-checker check ./specs -s . --rules rules.yaml
+```
+
+### DSL Reference
+
+**Properties** (source.X or target.X):
+- `module`, `name`: module name
+- `path`, `source_path`: file path  
+- `layer`: infrastructure | domain | application | interface
+- `context`: bounded context name
+- `stability`: stable | normal | volatile
+
+**Operators**:
+- `==`, `!=`: equality
+- `AND`, `OR`, `NOT` (or `&&`, `||`, `!`)
+
+**Methods**:
+- `source.layer.can_depend_on(target.layer)`
+- `source.stability.can_depend_on(target.stability)`
+- `source.X.exists`: check if property has value
+
 ## Example Violations
 
 Layer:
@@ -189,9 +235,11 @@ PASSED: 11 warning(s)
 - [x] Filter test dependencies from warnings
 - [x] Return type extraction in signatures
 - [x] Events checking (emits)
+- [x] Rule DSL for custom architectural constraints
 
 ### In Progress
 - [ ] Subscribes checking (requires function body analysis)
+- [ ] More DSL functions (starts_with, contains, etc.)
 
 ### Planned
 - [ ] GitHub Actions integration

@@ -1,0 +1,58 @@
+# Example rules configuration for spec-checker
+# Load with: spec-checker check ./specs -s . --rules rules.yaml
+
+# Disable specific built-in rules
+disable_builtin:
+  # - layer-direction      # Uncomment to disable layer checking
+  # - context-isolation    # Uncomment to disable context checking
+  # - stability-direction  # Uncomment to disable stability checking
+
+# Custom rules
+rules:
+  # Example: Prevent test modules from depending on production code
+  - name: no-test-depends-prod
+    description: "Test modules should mock dependencies, not import production code directly"
+    when: "source.context == test"
+    require: "target.context == test OR target.stability == stable"
+    severity: warning
+
+  # Example: Core modules must be stable
+  - name: core-must-be-stable
+    description: "Modules in the 'core' context must have stable stability"
+    when: "source.context == core"
+    require: "source.stability == stable"
+    severity: error
+
+  # Example: Only interface layer can have external dependencies
+  - name: external-via-interface
+    description: "External dependencies should be wrapped in interface layer"
+    when: "source.layer != interface"
+    require: "target.layer != infrastructure OR target.context == source.context"
+    severity: warning
+
+# Rule DSL Reference:
+#
+# Properties (source.X or target.X):
+#   - module, name: module name
+#   - path, source_path: file path
+#   - layer: infrastructure | domain | application | interface
+#   - context: bounded context name (string)
+#   - stability: stable | normal | volatile
+#   - language: rust | solidity | typescript
+#
+# Operators:
+#   - ==, !=: equality comparison
+#   - AND, and, &&: logical and
+#   - OR, or, ||: logical or
+#   - NOT, not, !: logical not
+#
+# Methods:
+#   - source.layer.can_depend_on(target.layer): check layer dependency rules
+#   - source.stability.can_depend_on(target.stability): check stability rules
+#   - source.X.exists: check if property has a value
+#
+# Literals:
+#   - true, false: boolean
+#   - infrastructure, domain, application, interface: layer values
+#   - stable, normal, volatile: stability values
+#   - "string" or 'string': string literals

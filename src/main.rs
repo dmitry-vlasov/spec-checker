@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 mod checker;
 mod extractors;
+mod rules;
 mod spec;
 
 use checker::SpecChecker;
@@ -34,6 +35,10 @@ enum Commands {
         /// Output format (text, json)
         #[arg(short, long, default_value = "text")]
         format: String,
+
+        /// Rules configuration file (YAML)
+        #[arg(short, long)]
+        rules: Option<PathBuf>,
     },
 
     /// Generate spec skeleton from existing code
@@ -68,7 +73,8 @@ fn main() -> Result<()> {
             path,
             source,
             format,
-        } => cmd_check(&path, &source, &format),
+            rules,
+        } => cmd_check(&path, &source, &format, rules.as_ref()),
         Commands::Init {
             source,
             language,
@@ -78,7 +84,12 @@ fn main() -> Result<()> {
     }
 }
 
-fn cmd_check(spec_path: &PathBuf, source_root: &PathBuf, _format: &str) -> Result<()> {
+fn cmd_check(
+    spec_path: &PathBuf,
+    source_root: &PathBuf,
+    _format: &str,
+    rules_path: Option<&PathBuf>,
+) -> Result<()> {
     println!("{}", "Spec Checker".bold().cyan());
     println!("{}", "=".repeat(40));
     println!();
@@ -90,8 +101,29 @@ fn cmd_check(spec_path: &PathBuf, source_root: &PathBuf, _format: &str) -> Resul
         return Ok(());
     }
 
-    // Build checker with layer map from all specs
-    let checker = SpecChecker::new(source_root.clone()).with_specs(&specs);
+    // Build checker with specs and optional rules config
+    let mut checker = SpecChecker::new(source_root.clone()).with_specs(&specs);
+
+    if let Some(rules_file) = rules_path {
+        let rules_content = std::fs::read_to_string(rules_file)?;
+        let rules_config: rules::RulesConfig = serde_yaml::from_str(&rules_content)?;
+        checker = checker.with_rules_config(&rules_config);
+        println!(
+            "{} Loaded {} custom rule(s)",
+            "ℹ".blue(),
+            rules_config.rules.len()
+        );
+        if !rules_config.disable_builtin.is_empty() {
+            println!(
+                "{} Disabled built-in: {:?}",
+                "ℹ".blue(),
+                rules_config.disable_builtin
+            );
+        }
+        println!();
+    }
+
+    let checker = checker;
     let mut total_errors = 0;
     let mut total_warnings = 0;
 

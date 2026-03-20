@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::extractors::{get_extractor, ExtractedModule};
-use crate::spec::{Layer, ModuleSpec, Stability};
+use crate::rules::{self, Rule, RulesConfig, Severity as RuleSeverity};
+use crate::spec::ModuleSpec;
 
 /// Result of checking a spec against implementation
 #[derive(Debug, Default)]
@@ -28,43 +29,43 @@ impl CheckResult {
     }
 }
 
-/// Module metadata for architectural checks
-#[derive(Debug, Clone)]
-struct ModuleMetadata {
-    layer: Option<Layer>,
-    context: Option<String>,
-    stability: Option<Stability>,
-}
-
 /// Specification checker
 pub struct SpecChecker {
     source_root: PathBuf,
-    /// Map of module source_path to metadata (built from all specs)
-    module_map: HashMap<String, ModuleMetadata>,
+    /// Map of module source_path to spec (built from all specs)
+    spec_map: HashMap<String, ModuleSpec>,
+    /// Active rules (built-in + custom)
+    rules: Vec<Rule>,
 }
 
 impl SpecChecker {
     pub fn new(source_root: PathBuf) -> Self {
         Self {
             source_root,
-            module_map: HashMap::new(),
+            spec_map: HashMap::new(),
+            rules: rules::builtin_rules(),
         }
     }
 
-    /// Build module metadata map from all specs for cross-module checking
+    /// Build spec map from all specs for cross-module checking
     pub fn with_specs(mut self, specs: &[ModuleSpec]) -> Self {
         for spec in specs {
             if let Some(source_path) = &spec.source_path {
-                self.module_map.insert(
-                    source_path.clone(),
-                    ModuleMetadata {
-                        layer: spec.layer,
-                        context: spec.context.clone(),
-                        stability: spec.stability,
-                    },
-                );
+                self.spec_map.insert(source_path.clone(), spec.clone());
             }
         }
+        self
+    }
+
+    /// Configure custom rules
+    pub fn with_rules_config(mut self, config: &RulesConfig) -> Self {
+        // Remove disabled built-in rules
+        self.rules
+            .retain(|r| !config.disable_builtin.contains(&r.name));
+
+        // Add custom rules
+        self.rules.extend(config.rules.clone());
+
         self
     }
 
@@ -155,53 +156,25 @@ impl SpecChecker {
         // and language-specific, so we skip it for now
     }
 
-    /// Check all architectural constraints (layer, context, stability)
+    /// Check all architectural constraints using rules engine
     fn check_architectural_constraints(&self, spec: &ModuleSpec, result: &mut CheckResult) {
-        let source_path = spec.source_path.as_deref().unwrap_or(&spec.module);
-
         for dep_path in &spec.depends_on {
-            let dep_meta = match self.module_map.get(dep_path) {
-                Some(meta) => meta,
+            let target_spec = match self.spec_map.get(dep_path) {
+                Some(s) => s,
                 None => continue, // External or unspecified dependency - skip
             };
 
-            // Layer check: vertical stratification
-            if let (Some(my_layer), Some(dep_layer)) = (&spec.layer, &dep_meta.layer) {
-                if !my_layer.can_depend_on(dep_layer) {
-                    result.error(format!(
-                        "Layer violation: '{}' ({:?}) cannot depend on '{}' ({:?})",
-                        source_path, my_layer, dep_path, dep_layer
-                    ));
-                }
-            }
+            // Check all rules against this dependency
+            let violations = rules::check_dependency(spec, target_spec, &self.rules);
 
-            // Context check: horizontal isolation
-            // Cross-context dependencies must go through interface layer
-            if let (Some(my_context), Some(dep_context)) = (&spec.context, &dep_meta.context) {
-                if my_context != dep_context {
-                    // Cross-context dependency
-                    let my_layer = spec.layer.unwrap_or(Layer::Domain);
-                    let dep_layer = dep_meta.layer.unwrap_or(Layer::Domain);
-
-                    // Either source or target must be at interface layer
-                    if my_layer != Layer::Interface && dep_layer != Layer::Interface {
-                        result.error(format!(
-                            "Context violation: '{}' (context: {}) cannot directly depend on '{}' (context: {}). Cross-context dependencies must go through Interface layer.",
-                            source_path, my_context, dep_path, dep_context
-                        ));
+            for violation in violations {
+                match violation.severity {
+                    RuleSeverity::Error => {
+                        result.error(format!("[{}] {}", violation.rule_name, violation.message));
                     }
-                }
-            }
-
-            // Stability check: stable shouldn't depend on volatile
-            if let (Some(my_stability), Some(dep_stability)) =
-                (&spec.stability, &dep_meta.stability)
-            {
-                if !my_stability.can_depend_on(dep_stability) {
-                    result.error(format!(
-                        "Stability violation: '{}' ({:?}) cannot depend on '{}' ({:?}). Stable modules cannot depend on less stable ones.",
-                        source_path, my_stability, dep_path, dep_stability
-                    ));
+                    RuleSeverity::Warning => {
+                        result.warning(format!("[{}] {}", violation.rule_name, violation.message));
+                    }
                 }
             }
         }
@@ -395,7 +368,7 @@ impl SpecChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spec::FunctionSpec;
+    use crate::spec::{FunctionSpec, Layer, Stability};
     use std::collections::HashMap;
     use tempfile::TempDir;
 
@@ -561,8 +534,8 @@ pub fn domain_function() {}
             "Expected layer violation error but got none"
         );
         assert!(
-            result.errors.iter().any(|e| e.contains("Layer violation")),
-            "Expected 'Layer violation' error but got: {:?}",
+            result.errors.iter().any(|e| e.contains("layer-direction")),
+            "Expected 'layer-direction' error but got: {:?}",
             result.errors
         );
     }
@@ -713,8 +686,8 @@ contract Bridge {
             result
                 .errors
                 .iter()
-                .any(|e| e.contains("Context violation")),
-            "Expected 'Context violation' error but got: {:?}",
+                .any(|e| e.contains("context-isolation")),
+            "Expected 'context-isolation' error but got: {:?}",
             result.errors
         );
     }
@@ -795,8 +768,8 @@ contract Bridge {
             result
                 .errors
                 .iter()
-                .any(|e| e.contains("Stability violation")),
-            "Expected 'Stability violation' error but got: {:?}",
+                .any(|e| e.contains("stability-direction")),
+            "Expected 'stability-direction' error but got: {:?}",
             result.errors
         );
     }
