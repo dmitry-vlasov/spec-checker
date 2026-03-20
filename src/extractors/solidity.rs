@@ -288,7 +288,39 @@ fn format_function_signature(node: &AstNode) -> String {
         String::new()
     };
 
-    format!("({})", params)
+    // Extract return types
+    let returns = if let Some(return_params) = &node.return_parameters {
+        if return_params.parameters.is_empty() {
+            None
+        } else {
+            let ret_types: Vec<String> = return_params
+                .parameters
+                .iter()
+                .map(|p| {
+                    p.type_descriptions
+                        .as_ref()
+                        .and_then(|td| td.type_string.as_ref())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "unknown".to_string())
+                })
+                .collect();
+
+            if ret_types.len() == 1 {
+                Some(ret_types[0].clone())
+            } else {
+                Some(format!("({})", ret_types.join(", ")))
+            }
+        }
+    } else {
+        None
+    };
+
+    let params_str = format!("({})", params);
+
+    match returns {
+        Some(ret) => format!("{} -> {}", params_str, ret),
+        None => params_str,
+    }
 }
 
 // ============================================================================
@@ -314,17 +346,23 @@ fn parse_solidity_regex(content: &str, path: &PathBuf) -> Result<ExtractedModule
             .to_string();
     }
 
-    // Extract functions
+    // Extract functions with optional return types
+    // Pattern: function name(params) modifiers returns (type)
     let func_re = regex::Regex::new(
-        r"function\s+(\w+)\s*\(([^)]*)\)\s*((?:public|external|internal|private|view|pure|payable|virtual|override|\s)*)",
+        r"function\s+(\w+)\s*\(([^)]*)\)\s*((?:public|external|internal|private|view|pure|payable|virtual|override|\s)*)(?:returns\s*\(([^)]*)\))?",
     )?;
 
     for cap in func_re.captures_iter(content) {
         let name = cap[1].to_string();
         let params = cap[2].to_string();
         let modifiers = cap[3].to_string();
+        let returns = cap.get(4).map(|m| m.as_str().trim().to_string());
 
-        let signature = format!("({})", params.trim());
+        let params_str = format!("({})", params.trim());
+        let signature = match returns {
+            Some(ret) if !ret.is_empty() => format!("{} -> {}", params_str, ret),
+            _ => params_str,
+        };
         module.function_signatures.insert(name.clone(), signature);
 
         if modifiers.contains("public") || modifiers.contains("external") {
@@ -445,7 +483,7 @@ contract Bridge {
 
     #[test]
     fn test_parse_ast_json() {
-        // Sample AST JSON from solc
+        // Sample AST JSON from solc with return types
         let ast_json = r#"{
             "nodeType": "SourceUnit",
             "nodes": [
@@ -464,6 +502,16 @@ contract Bridge {
                                         "name": "amount",
                                         "typeDescriptions": {
                                             "typeString": "uint256"
+                                        }
+                                    }
+                                ]
+                            },
+                            "returnParameters": {
+                                "parameters": [
+                                    {
+                                        "name": "",
+                                        "typeDescriptions": {
+                                            "typeString": "bool"
                                         }
                                     }
                                 ]
@@ -502,10 +550,17 @@ contract Bridge {
             .contains(&"privateFunc".to_string()));
         assert!(module.events.contains(&"Transfer".to_string()));
 
-        // Check signature extraction
-        assert_eq!(
-            module.function_signatures.get("publicFunc"),
-            Some(&"(uint256 amount)".to_string())
+        // Check signature extraction with return type
+        let sig = module.function_signatures.get("publicFunc").unwrap();
+        assert!(
+            sig.contains("(uint256 amount)"),
+            "Expected params in signature but got: {}",
+            sig
+        );
+        assert!(
+            sig.contains("-> bool"),
+            "Expected '-> bool' return type in signature but got: {}",
+            sig
         );
     }
 }

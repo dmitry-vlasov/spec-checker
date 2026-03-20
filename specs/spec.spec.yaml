@@ -6,7 +6,7 @@ source_path: src/spec.rs
 
 exposes:
   from_extracted:
-    signature: "(extracted: &ExtractedModule)"
+    signature: "(extracted: &ExtractedModule) -> Self"
     ensures:
       - Creates ModuleSpec from extracted implementation
 

@@ -6,7 +6,7 @@ source_path: src/extractors/mod.rs
 
 exposes:
   get_extractor:
-    signature: "(language: &str)"
+    signature: "(language: &str) -> Result<Box<dyn Extractor>>"
     requires:
       - language is "solidity", "rust", or alias
     ensures:

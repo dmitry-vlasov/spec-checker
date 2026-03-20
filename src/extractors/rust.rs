@@ -205,34 +205,15 @@ impl<'ast> Visit<'ast> for RustVisitor {
 
 impl RustVisitor {
     fn format_fn_signature(&self, item_fn: &ItemFn) -> String {
-        let params: Vec<String> = item_fn
-            .sig
-            .inputs
-            .iter()
-            .map(|arg| match arg {
-                syn::FnArg::Receiver(r) => {
-                    if r.reference.is_some() {
-                        if r.mutability.is_some() {
-                            "&mut self".to_string()
-                        } else {
-                            "&self".to_string()
-                        }
-                    } else {
-                        "self".to_string()
-                    }
-                }
-                syn::FnArg::Typed(pat_type) => {
-                    format!("{}", quote::quote!(#pat_type))
-                }
-            })
-            .collect();
-
-        format!("({})", params.join(", "))
+        Self::format_signature(&item_fn.sig)
     }
 
     fn format_method_signature(&self, method: &syn::ImplItemFn) -> String {
-        let params: Vec<String> = method
-            .sig
+        Self::format_signature(&method.sig)
+    }
+
+    fn format_signature(sig: &syn::Signature) -> String {
+        let params: Vec<String> = sig
             .inputs
             .iter()
             .map(|arg| match arg {
@@ -253,7 +234,18 @@ impl RustVisitor {
             })
             .collect();
 
-        format!("({})", params.join(", "))
+        let params_str = format!("({})", params.join(", "));
+
+        // Extract return type
+        let return_type = match &sig.output {
+            syn::ReturnType::Default => None,
+            syn::ReturnType::Type(_, ty) => Some(quote::quote!(#ty).to_string()),
+        };
+
+        match return_type {
+            Some(ret) => format!("{} -> {}", params_str, ret),
+            None => params_str,
+        }
     }
 }
 
@@ -345,6 +337,21 @@ mod tests {
 
         // Test imports should be filtered out
         assert!(!module.imports.contains(&"test_utils".to_string()));
+
+        // Check return type extraction
+        let new_sig = module.function_signatures.get("new").unwrap();
+        assert!(
+            new_sig.contains("-> Self"),
+            "Expected '-> Self' in signature but got: {}",
+            new_sig
+        );
+
+        let deposit_sig = module.function_signatures.get("deposit").unwrap();
+        assert!(
+            deposit_sig.contains("-> Result"),
+            "Expected '-> Result' in signature but got: {}",
+            deposit_sig
+        );
 
         // Structs
         assert!(module.state_variables.contains(&"Bridge".to_string()));

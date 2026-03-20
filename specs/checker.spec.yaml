@@ -6,7 +6,7 @@ source_path: src/checker.rs
 
 exposes:
   check:
-    signature: "(&self, spec: &ModuleSpec)"
+    signature: "(&self, spec: &ModuleSpec) -> Result<CheckResult>"
     requires:
       - spec has valid module name
     ensures:
@@ -15,12 +15,19 @@ exposes:
       - Returns errors for forbidden dependencies
       - Returns warnings for unlisted dependencies
 
+  with_specs:
+    signature: "(self, specs: &[ModuleSpec]) -> Self"
+    ensures:
+      - Builds layer map from all specs for cross-module checking
+
 internal:
   - check_exposes
   - check_internal
   - check_dependencies
   - check_forbidden_deps
+  - check_layer_violations
   - find_source_file
+  - extract_module_name
 
 depends_on:
   - src/extractors/mod.rs

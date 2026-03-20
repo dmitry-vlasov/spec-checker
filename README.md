@@ -148,9 +148,10 @@ PASSED: 11 warning(s)
 - [x] Self-specification in `specs/`
 - [x] Layer violation detection
 - [x] Filter test dependencies from warnings
+- [x] Return type extraction in signatures
 
 ### In Progress
-- [ ] Return type extraction in signatures
+- [ ] Events checking (emits/subscribes)
 
 ### Planned
 - [ ] GitHub Actions integration
