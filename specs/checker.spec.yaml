@@ -6,7 +6,7 @@ source_path: src/checker.rs
 
 exposes:
   check:
-    signature: "(&self, spec: &ModuleSpec) -> Result<CheckResult>"
+    signature: "(&self, spec: &ModuleSpec)"
     requires:
       - spec has valid module name
     ensures:
@@ -25,5 +25,9 @@ internal:
 depends_on:
   - extractors
   - spec
+
+external_deps:
+  - anyhow
+  - tempfile
 
 layer: domain

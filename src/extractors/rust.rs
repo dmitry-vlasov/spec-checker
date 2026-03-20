@@ -64,12 +64,20 @@ fn parse_rust_regex(content: &str, path: &PathBuf) -> Result<ExtractedModule> {
         }
     }
 
-    // Extract use statements (imports)
-    let use_re = regex::Regex::new(r"use\s+([^;]+)")?;
-    for cap in use_re.captures_iter(content) {
+    // Extract use statements (imports) - module-level only, skip test code
+    // Match "use" at start of line (module-level imports)
+    let use_re = regex::Regex::new(r"(?m)^use\s+([^;\n]+);")?;
+
+    // Only extract imports before #[cfg(test)] to skip test dependencies
+    let main_content = content.split("#[cfg(test)]").next().unwrap_or(content);
+
+    for cap in use_re.captures_iter(main_content) {
         let import = cap[1].trim().to_string();
-        // Skip prelude and std primitives
-        if !import.starts_with("std::prelude") {
+        // Skip prelude, std primitives, and internal super/crate imports
+        if !import.starts_with("std::prelude")
+            && !import.starts_with("super::")
+            && !import.starts_with("crate::")
+        {
             module.imports.push(import);
         }
     }
@@ -161,7 +169,8 @@ struct Error;
             .contains(&"execute_transfer".to_string()));
 
         assert!(module.imports.iter().any(|i| i.contains("HashMap")));
-        assert!(module.imports.iter().any(|i| i.contains("Config")));
+        // crate:: and super:: imports are filtered out as internal
+        // assert!(module.imports.iter().any(|i| i.contains("Config")));
 
         assert!(module.state_variables.contains(&"Bridge".to_string()));
     }

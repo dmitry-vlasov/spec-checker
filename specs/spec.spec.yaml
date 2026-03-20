@@ -6,7 +6,7 @@ source_path: src/spec.rs
 
 exposes:
   from_extracted:
-    signature: "(extracted: &ExtractedModule) -> Self"
+    signature: "(extracted: &ExtractedModule)"
     ensures:
       - Creates ModuleSpec from extracted implementation
 
@@ -14,6 +14,9 @@ internal: []
 
 depends_on:
   - extractors
+
+external_deps:
+  - serde
 
 layer: domain
 

@@ -20,6 +20,8 @@ impl CheckResult {
         self.warnings.push(msg.into());
     }
 
+    /// Returns true if there are no errors (used by tests)
+    #[cfg(test)]
     pub fn is_ok(&self) -> bool {
         self.errors.is_empty()
     }

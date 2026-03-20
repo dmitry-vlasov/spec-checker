@@ -121,6 +121,9 @@ pub enum Layer {
 }
 
 impl Layer {
+    /// Check if this layer can depend on another layer.
+    /// Used for architectural validation (Phase 2).
+    #[allow(dead_code)]
     pub fn can_depend_on(&self, other: &Layer) -> bool {
         use Layer::*;
         match (self, other) {

@@ -6,7 +6,7 @@ source_path: src/extractors/mod.rs
 
 exposes:
   get_extractor:
-    signature: "(language: &str) -> Result<Box<dyn Extractor>>"
+    signature: "(language: &str)"
     requires:
       - language is "solidity", "rust", or alias
     ensures:
@@ -16,5 +16,8 @@ exposes:
 depends_on:
   - solidity
   - rust
+
+external_deps:
+  - anyhow
 
 layer: infrastructure
