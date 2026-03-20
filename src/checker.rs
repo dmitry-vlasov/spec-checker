@@ -160,7 +160,13 @@ impl SpecChecker {
         }
 
         for import in &extracted.imports {
-            let is_allowed = spec.depends_on.iter().any(|dep| import.contains(dep));
+            // Check if import matches any dependency
+            // depends_on can be full paths (src/checker.rs) or module names (checker)
+            let is_allowed = spec.depends_on.iter().any(|dep| {
+                // Extract module name from path: "src/extractors/mod.rs" -> "extractors"
+                let dep_name = Self::extract_module_name(dep);
+                import == &dep_name || import.contains(&dep_name)
+            });
             let is_external = spec.external_deps.iter().any(|dep| import.contains(dep));
             let is_std = import.starts_with("std::")
                 || import.starts_with("core::")
@@ -173,6 +179,26 @@ impl SpecChecker {
                 ));
             }
         }
+    }
+
+    /// Extract module name from a file path
+    /// "src/checker.rs" -> "checker"
+    /// "src/extractors/mod.rs" -> "extractors"
+    fn extract_module_name(path: &str) -> String {
+        let path = path.trim_end_matches(".rs");
+        
+        // Handle mod.rs case: "src/extractors/mod" -> "extractors"
+        if path.ends_with("/mod") {
+            return path
+                .trim_end_matches("/mod")
+                .rsplit('/')
+                .next()
+                .unwrap_or(path)
+                .to_string();
+        }
+        
+        // Regular case: "src/checker" -> "checker"
+        path.rsplit('/').next().unwrap_or(path).to_string()
     }
 
     /// Check for forbidden dependencies

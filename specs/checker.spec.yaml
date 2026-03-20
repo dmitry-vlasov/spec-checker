@@ -23,8 +23,8 @@ internal:
   - find_source_file
 
 depends_on:
-  - extractors/mod        # extractors module
-  - spec                  # spec module
+  - src/extractors/mod.rs
+  - src/spec.rs
 
 external_deps:
   - anyhow
