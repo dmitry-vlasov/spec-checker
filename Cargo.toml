@@ -1,8 +1,8 @@
 [package]
-name = "allset-spec-checker"
+name = "spec-checker"
 version = "0.1.0"
 edition = "2021"
-description = "Structural and behavioral specification checker for AllSet"
+description = "Structural and behavioral specification checker"
 license = "Apache-2.0"
 repository = "https://github.com/fastxyz/allset-spec-checker"
 
@@ -40,5 +40,5 @@ assert_cmd = "2"
 predicates = "3"
 
 [[bin]]
-name = "allset-spec-checker"
+name = "spec-checker"
 path = "src/main.rs"

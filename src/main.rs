@@ -11,8 +11,8 @@ use checker::SpecChecker;
 use spec::ModuleSpec;
 
 #[derive(Parser)]
-#[command(name = "allset-spec-checker")]
-#[command(about = "Structural and behavioral specification checker for AllSet")]
+#[command(name = "spec-checker")]
+#[command(about = "Structural and behavioral specification checker")]
 #[command(version)]
 struct Cli {
     #[command(subcommand)]

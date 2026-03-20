@@ -9,8 +9,7 @@ pub use rust::RustExtractor;
 pub use solidity::SolidityExtractor;
 
 /// Information extracted from a source file
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ExtractedModule {
     /// Module/contract name
     pub name: String,
@@ -42,7 +41,6 @@ pub struct ExtractedModule {
     /// Modifiers (Solidity) or attributes (Rust)
     pub modifiers: Vec<String>,
 }
-
 
 /// Trait for language-specific extractors
 pub trait Extractor {

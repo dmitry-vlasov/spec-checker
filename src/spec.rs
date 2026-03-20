@@ -79,8 +79,7 @@ pub struct ModuleSpec {
 }
 
 /// Function-level specification (Design by Contract)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FunctionSpec {
     /// Function signature
     #[serde(default)]
@@ -110,7 +109,6 @@ pub struct FunctionSpec {
     #[serde(default)]
     pub visibility: Option<String>,
 }
-
 
 /// Architectural layers (lower cannot import higher)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

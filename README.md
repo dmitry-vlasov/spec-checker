@@ -1,6 +1,6 @@
-# AllSet Spec Checker
+# Spec Checker
 
-A structural and behavioral specification checker for the AllSet codebase.
+A structural and behavioral specification checker for codebases.
 
 ## Purpose
 
@@ -73,16 +73,16 @@ cargo install --path .
 
 ```bash
 # Check all specs in a directory
-allset-spec-checker check ./specs
+spec-checker check ./specs
 
 # Check a single module
-allset-spec-checker check ./specs/Bridge.spec.yaml
+spec-checker check ./specs/Bridge.spec.yaml
 
 # Generate spec skeleton from existing code
-allset-spec-checker init --language solidity ./contracts/Bridge.sol
+spec-checker init --language solidity ./contracts/Bridge.sol
 
 # Diff: show spec vs implementation discrepancies
-allset-spec-checker diff ./specs/Bridge.spec.yaml ./contracts/Bridge.sol
+spec-checker diff ./specs/Bridge.spec.yaml ./contracts/Bridge.sol
 ```
 
 ## Development Phases
