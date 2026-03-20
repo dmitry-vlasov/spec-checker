@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use serde::Deserialize;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -21,7 +22,6 @@ impl Extractor for SolidityExtractor {
 
         if let Ok(output) = output {
             if output.status.success() {
-                // Parse the AST JSON
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 return parse_solidity_ast(&stdout, path);
             }
@@ -34,12 +34,266 @@ impl Extractor for SolidityExtractor {
     }
 }
 
-fn parse_solidity_ast(_ast_output: &str, path: &PathBuf) -> Result<ExtractedModule> {
-    // The AST output format from solc
-    // For now, fall back to regex - full AST parsing is more complex
+// ============================================================================
+// AST JSON Parsing (solc --ast-compact-json output)
+// ============================================================================
+
+/// Root structure of solc AST output
+#[derive(Debug, Deserialize)]
+struct SolcAstOutput {
+    #[serde(default)]
+    sources: std::collections::HashMap<String, SourceUnit>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SourceUnit {
+    #[serde(rename = "AST")]
+    ast: Option<AstNode>,
+}
+
+/// Generic AST node - solc uses a flat structure with nodeType discriminator
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct AstNode {
+    #[serde(rename = "nodeType")]
+    node_type: String,
+
+    #[serde(default)]
+    name: Option<String>,
+
+    #[serde(default)]
+    visibility: Option<String>,
+
+    #[serde(default)]
+    kind: Option<String>,
+
+    #[serde(rename = "absolutePath")]
+    #[serde(default)]
+    absolute_path: Option<String>,
+
+    #[serde(default)]
+    parameters: Option<ParameterList>,
+
+    #[serde(rename = "returnParameters")]
+    #[serde(default)]
+    return_parameters: Option<ParameterList>,
+
+    #[serde(default)]
+    nodes: Option<Vec<AstNode>>,
+
+    #[serde(rename = "typeName")]
+    #[serde(default)]
+    type_name: Option<Box<AstNode>>,
+
+    #[serde(rename = "typeDescriptions")]
+    #[serde(default)]
+    type_descriptions: Option<TypeDescriptions>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ParameterList {
+    #[serde(default)]
+    parameters: Vec<Parameter>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct Parameter {
+    #[serde(default)]
+    name: String,
+
+    #[serde(rename = "typeName")]
+    #[serde(default)]
+    type_name: Option<Box<AstNode>>,
+
+    #[serde(rename = "typeDescriptions")]
+    #[serde(default)]
+    type_descriptions: Option<TypeDescriptions>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TypeDescriptions {
+    #[serde(rename = "typeString")]
+    #[serde(default)]
+    type_string: Option<String>,
+}
+
+fn parse_solidity_ast(ast_output: &str, path: &PathBuf) -> Result<ExtractedModule> {
+    // solc --ast-compact-json outputs JSON after some header text
+    // Find the JSON part (starts with '{' or the sources object)
+    let json_start = ast_output.find('{');
+
+    if json_start.is_none() {
+        // No JSON found, fall back to regex
+        let content = std::fs::read_to_string(path)?;
+        return parse_solidity_regex(&content, path);
+    }
+
+    let json_str = &ast_output[json_start.unwrap()..];
+
+    // Try to parse as SolcAstOutput first (multiple files format)
+    if let Ok(output) = serde_json::from_str::<SolcAstOutput>(json_str) {
+        return extract_from_solc_output(&output, path);
+    }
+
+    // Try to parse as single AstNode (single file format)
+    if let Ok(ast) = serde_json::from_str::<AstNode>(json_str) {
+        return extract_from_ast_node(&ast, path);
+    }
+
+    // Fall back to regex
     let content = std::fs::read_to_string(path)?;
     parse_solidity_regex(&content, path)
 }
+
+fn extract_from_solc_output(output: &SolcAstOutput, path: &PathBuf) -> Result<ExtractedModule> {
+    let mut module = ExtractedModule {
+        language: "solidity".to_string(),
+        source_path: Some(path.to_string_lossy().to_string()),
+        ..Default::default()
+    };
+
+    for (_source_path, source_unit) in &output.sources {
+        if let Some(ast) = &source_unit.ast {
+            extract_from_node(ast, &mut module);
+        }
+    }
+
+    if module.name.is_empty() {
+        module.name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Unknown")
+            .to_string();
+    }
+
+    Ok(module)
+}
+
+fn extract_from_ast_node(ast: &AstNode, path: &PathBuf) -> Result<ExtractedModule> {
+    let mut module = ExtractedModule {
+        language: "solidity".to_string(),
+        source_path: Some(path.to_string_lossy().to_string()),
+        ..Default::default()
+    };
+
+    extract_from_node(ast, &mut module);
+
+    if module.name.is_empty() {
+        module.name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Unknown")
+            .to_string();
+    }
+
+    Ok(module)
+}
+
+fn extract_from_node(node: &AstNode, module: &mut ExtractedModule) {
+    match node.node_type.as_str() {
+        "SourceUnit" => {
+            if let Some(nodes) = &node.nodes {
+                for child in nodes {
+                    extract_from_node(child, module);
+                }
+            }
+        }
+        "ContractDefinition" => {
+            if let Some(name) = &node.name {
+                if module.name.is_empty() {
+                    module.name = name.clone();
+                }
+            }
+            if let Some(nodes) = &node.nodes {
+                for child in nodes {
+                    extract_from_node(child, module);
+                }
+            }
+        }
+        "FunctionDefinition" => {
+            if let Some(name) = &node.name {
+                // Skip constructor and fallback
+                let kind = node.kind.as_deref().unwrap_or("");
+                if kind == "constructor" || kind == "fallback" || kind == "receive" {
+                    return;
+                }
+
+                let visibility = node.visibility.as_deref().unwrap_or("internal");
+                let signature = format_function_signature(node);
+
+                module.function_signatures.insert(name.clone(), signature);
+
+                if visibility == "public" || visibility == "external" {
+                    module.public_functions.push(name.clone());
+                } else {
+                    module.private_functions.push(name.clone());
+                }
+            }
+        }
+        "EventDefinition" => {
+            if let Some(name) = &node.name {
+                module.events.push(name.clone());
+            }
+        }
+        "ModifierDefinition" => {
+            if let Some(name) = &node.name {
+                module.modifiers.push(name.clone());
+            }
+        }
+        "VariableDeclaration" => {
+            // State variables at contract level
+            if let Some(name) = &node.name {
+                module.state_variables.push(name.clone());
+            }
+        }
+        "ImportDirective" => {
+            if let Some(abs_path) = &node.absolute_path {
+                module.imports.push(abs_path.clone());
+            }
+        }
+        _ => {
+            // Recurse into children for other node types
+            if let Some(nodes) = &node.nodes {
+                for child in nodes {
+                    extract_from_node(child, module);
+                }
+            }
+        }
+    }
+}
+
+fn format_function_signature(node: &AstNode) -> String {
+    let params = if let Some(param_list) = &node.parameters {
+        param_list
+            .parameters
+            .iter()
+            .map(|p| {
+                let type_str = p
+                    .type_descriptions
+                    .as_ref()
+                    .and_then(|td| td.type_string.as_ref())
+                    .map(|s| s.as_str())
+                    .unwrap_or("unknown");
+
+                if p.name.is_empty() {
+                    type_str.to_string()
+                } else {
+                    format!("{} {}", type_str, p.name)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        String::new()
+    };
+
+    format!("({})", params)
+}
+
+// ============================================================================
+// Regex Fallback (when solc is not available)
+// ============================================================================
 
 fn parse_solidity_regex(content: &str, path: &PathBuf) -> Result<ExtractedModule> {
     let mut module = ExtractedModule {
@@ -99,7 +353,7 @@ fn parse_solidity_regex(content: &str, path: &PathBuf) -> Result<ExtractedModule
         module.events.push(cap[1].to_string());
     }
 
-    // Extract state variables
+    // Extract state variables (simplified)
     let state_re = regex::Regex::new(
         r"^\s*(mapping|address|uint\d*|int\d*|bytes\d*|string|bool)\s+(?:public\s+|private\s+|internal\s+)?(\w+)\s*[;=]",
     )?;
@@ -107,7 +361,7 @@ fn parse_solidity_regex(content: &str, path: &PathBuf) -> Result<ExtractedModule
         module.state_variables.push(cap[2].to_string());
     }
 
-    // Extract modifiers (Solidity specific)
+    // Extract modifiers
     let modifier_re = regex::Regex::new(r"modifier\s+(\w+)")?;
     for cap in modifier_re.captures_iter(content) {
         module.modifiers.push(cap[1].to_string());
@@ -123,7 +377,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
-    fn test_extract_solidity_contract() {
+    fn test_extract_solidity_contract_regex() {
         let content = r#"
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
@@ -187,5 +441,71 @@ contract Bridge {
         assert!(module.events.contains(&"Withdrawn".to_string()));
 
         assert!(module.modifiers.contains(&"onlyAdmin".to_string()));
+    }
+
+    #[test]
+    fn test_parse_ast_json() {
+        // Sample AST JSON from solc
+        let ast_json = r#"{
+            "nodeType": "SourceUnit",
+            "nodes": [
+                {
+                    "nodeType": "ContractDefinition",
+                    "name": "TestContract",
+                    "nodes": [
+                        {
+                            "nodeType": "FunctionDefinition",
+                            "name": "publicFunc",
+                            "visibility": "public",
+                            "kind": "function",
+                            "parameters": {
+                                "parameters": [
+                                    {
+                                        "name": "amount",
+                                        "typeDescriptions": {
+                                            "typeString": "uint256"
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "nodeType": "FunctionDefinition",
+                            "name": "privateFunc",
+                            "visibility": "private",
+                            "kind": "function",
+                            "parameters": {
+                                "parameters": []
+                            }
+                        },
+                        {
+                            "nodeType": "EventDefinition",
+                            "name": "Transfer"
+                        }
+                    ]
+                }
+            ]
+        }"#;
+
+        let ast: AstNode = serde_json::from_str(ast_json).unwrap();
+        let mut module = ExtractedModule {
+            language: "solidity".to_string(),
+            ..Default::default()
+        };
+
+        extract_from_node(&ast, &mut module);
+
+        assert_eq!(module.name, "TestContract");
+        assert!(module.public_functions.contains(&"publicFunc".to_string()));
+        assert!(module
+            .private_functions
+            .contains(&"privateFunc".to_string()));
+        assert!(module.events.contains(&"Transfer".to_string()));
+
+        // Check signature extraction
+        assert_eq!(
+            module.function_signatures.get("publicFunc"),
+            Some(&"(uint256 amount)".to_string())
+        );
     }
 }
