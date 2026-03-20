@@ -13,8 +13,9 @@ exposes:
       - Returns appropriate extractor
       - Returns error for unsupported language
 
-# No internal module dependencies - solidity/rust are submodules, not deps
-depends_on: []
+depends_on:
+  - src/extractors/solidity.rs
+  - src/extractors/rust.rs
 
 external_deps:
   - anyhow
