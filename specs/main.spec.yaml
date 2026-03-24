@@ -1,10 +1,10 @@
 # Spec Checker - Main CLI module
+# Inherits: language=rust (root)
+# Overrides: context=cli, stability=normal, layer=interface
 
 module: main
-language: rust
 source_path: src/main.rs
 
-# Architectural attributes
 layer: interface
 context: cli
 stability: normal

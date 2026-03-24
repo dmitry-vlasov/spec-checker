@@ -1,0 +1,4 @@
+# Root-level defaults for all spec-checker modules
+language: rust
+context: core
+stability: stable

@@ -1,13 +1,10 @@
 # Spec Checker - Spec module (data structures)
+# Inherits: language=rust, context=core, stability=stable (root)
 
 module: spec
-language: rust
 source_path: src/spec.rs
 
-# Architectural attributes
 layer: domain
-context: core
-stability: stable
 
 exposes:
   from_extracted:
@@ -18,16 +15,25 @@ exposes:
       - Populates internal from private_functions
       - Populates emits from events
 
-internal: []
+  resolve_defaults:
+    signature: "(spec_dir: &Path, root_dir: &Path) -> SpecDefaults"
+    ensures:
+      - Walks directory chain from root_dir to spec_dir
+      - Loads _defaults.yaml at each level
+      - Merges defaults (parent first, child overlays)
+
+internal:
+  - merge_optional_vecs
 
 # Data structures exposed (not functions, but types)
-# ModuleSpec, FunctionSpec, Layer, Stability
+# ModuleSpec, FunctionSpec, Layer, Stability, SpecDefaults
 
 depends_on:
   - src/extractors/mod.rs    # Uses ExtractedModule type
 
 external_deps:
   - serde
+  - serde_yaml
 
 forbidden_deps:
   - syn           # belongs in extractors
@@ -39,3 +45,5 @@ invariants:
   - "Domain cannot depend on Application/Interface"
   - "Stable cannot depend on Normal or Volatile"
   - "Normal cannot depend on Volatile"
+  - "apply_defaults never overwrites explicitly set fields"
+  - "List fields merge (union), scalar fields override"

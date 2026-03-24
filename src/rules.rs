@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::spec::{Layer, ModuleSpec, Stability};
+use crate::spec::{LayerConfig, ModuleSpec, Stability};
 
 /// A custom architectural rule
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,12 +48,64 @@ pub struct RulesConfig {
     /// Disable built-in rules
     #[serde(default)]
     pub disable_builtin: Vec<String>,
+
+    /// Custom layer definitions (overrides the built-in 4-layer model)
+    #[serde(default)]
+    pub layers: Option<LayersInput>,
+}
+
+/// Custom layer configuration input.
+///
+/// Supports two formats:
+/// - **Linear list**: each layer can depend on all layers below it
+///   ```yaml
+///   layers:
+///     - presentation
+///     - application
+///     - domain
+///     - infrastructure
+///   ```
+/// - **Explicit DAG**: each layer lists its allowed dependencies
+///   ```yaml
+///   layers:
+///     presentation:
+///       can_depend_on: [application, domain, infrastructure]
+///     domain:
+///       can_depend_on: [infrastructure]
+///   ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum LayersInput {
+    Linear(Vec<String>),
+    Dag(std::collections::HashMap<String, LayerDepsInput>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayerDepsInput {
+    pub can_depend_on: Vec<String>,
+}
+
+impl LayersInput {
+    /// Convert to a LayerConfig
+    pub fn to_layer_config(&self) -> LayerConfig {
+        match self {
+            LayersInput::Linear(layers) => LayerConfig::from_linear(layers),
+            LayersInput::Dag(dag) => {
+                let converted: std::collections::HashMap<String, Vec<String>> = dag
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.can_depend_on.clone()))
+                    .collect();
+                LayerConfig::from_dag(&converted)
+            }
+        }
+    }
 }
 
 /// Context for evaluating rule expressions
 pub struct EvalContext<'a> {
     pub source: &'a ModuleSpec,
     pub target: &'a ModuleSpec,
+    pub layer_config: &'a LayerConfig,
 }
 
 /// Evaluate a rule expression
@@ -156,11 +208,6 @@ fn eval_value(expr: &str, ctx: &EvalContext) -> Result<String, String> {
         return Ok(expr[1..expr.len() - 1].to_string());
     }
 
-    // Layer literals
-    if let Some(layer) = parse_layer_literal(expr) {
-        return Ok(format!("{:?}", layer).to_lowercase());
-    }
-
     // Stability literals
     if let Some(stability) = parse_stability_literal(expr) {
         return Ok(format!("{:?}", stability).to_lowercase());
@@ -185,7 +232,8 @@ fn eval_module_property(module: &ModuleSpec, prop: &str) -> Result<String, Strin
         "source_path" | "path" => Ok(module.source_path.clone().unwrap_or_default()),
         "layer" => Ok(module
             .layer
-            .map(|l| format!("{:?}", l).to_lowercase())
+            .as_ref()
+            .map(|l| l.0.clone())
             .unwrap_or_default()),
         "context" => Ok(module.context.clone().unwrap_or_default()),
         "stability" => Ok(module
@@ -193,16 +241,6 @@ fn eval_module_property(module: &ModuleSpec, prop: &str) -> Result<String, Strin
             .map(|s| format!("{:?}", s).to_lowercase())
             .unwrap_or_default()),
         _ => Err(format!("Unknown property: {}", prop)),
-    }
-}
-
-fn parse_layer_literal(s: &str) -> Option<Layer> {
-    match s.to_lowercase().as_str() {
-        "infrastructure" | "layer::infrastructure" => Some(Layer::Infrastructure),
-        "domain" | "layer::domain" => Some(Layer::Domain),
-        "application" | "layer::application" => Some(Layer::Application),
-        "interface" | "layer::interface" => Some(Layer::Interface),
-        _ => None,
     }
 }
 
@@ -218,11 +256,11 @@ fn parse_stability_literal(s: &str) -> Option<Stability> {
 fn eval_can_depend_on(expr: &str, ctx: &EvalContext) -> Result<bool, String> {
     // Parse: source.layer.can_depend_on(target.layer) or similar
     if expr.contains("layer.can_depend_on") {
-        let source_layer = ctx.source.layer;
-        let target_layer = ctx.target.layer;
+        let source_layer = &ctx.source.layer;
+        let target_layer = &ctx.target.layer;
 
         match (source_layer, target_layer) {
-            (Some(s), Some(t)) => Ok(s.can_depend_on(&t)),
+            (Some(s), Some(t)) => Ok(ctx.layer_config.can_depend_on(&s.0, &t.0)),
             _ => Ok(true), // If either is unspecified, allow
         }
     } else if expr.contains("stability.can_depend_on") {
@@ -292,8 +330,13 @@ pub fn check_dependency(
     source: &ModuleSpec,
     target: &ModuleSpec,
     rules: &[Rule],
+    layer_config: &LayerConfig,
 ) -> Vec<RuleViolation> {
-    let ctx = EvalContext { source, target };
+    let ctx = EvalContext {
+        source,
+        target,
+        layer_config,
+    };
     let mut violations = Vec::new();
 
     for rule in rules {
@@ -357,6 +400,7 @@ pub struct RuleViolation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::spec::Layer;
 
     fn make_spec(
         name: &str,
@@ -374,13 +418,19 @@ mod tests {
         }
     }
 
+    fn builtin_layer_config() -> LayerConfig {
+        LayerConfig::builtin()
+    }
+
     #[test]
     fn test_evaluate_literals() {
         let source = make_spec("a", None, None, None);
         let target = make_spec("b", None, None, None);
+        let lc = builtin_layer_config();
         let ctx = EvalContext {
             source: &source,
             target: &target,
+            layer_config: &lc,
         };
 
         assert!(evaluate("true", &ctx).unwrap());
@@ -391,19 +441,21 @@ mod tests {
     fn test_evaluate_property_access() {
         let source = make_spec(
             "payments",
-            Some(Layer::Domain),
+            Some(Layer::new("domain")),
             Some("payments"),
             Some(Stability::Stable),
         );
         let target = make_spec(
             "users",
-            Some(Layer::Domain),
+            Some(Layer::new("domain")),
             Some("users"),
             Some(Stability::Volatile),
         );
+        let lc = builtin_layer_config();
         let ctx = EvalContext {
             source: &source,
             target: &target,
+            layer_config: &lc,
         };
 
         assert_eq!(eval_value("source.module", &ctx).unwrap(), "payments");
@@ -414,11 +466,13 @@ mod tests {
 
     #[test]
     fn test_evaluate_comparisons() {
-        let source = make_spec("a", Some(Layer::Domain), Some("payments"), None);
-        let target = make_spec("b", Some(Layer::Domain), Some("users"), None);
+        let source = make_spec("a", Some(Layer::new("domain")), Some("payments"), None);
+        let target = make_spec("b", Some(Layer::new("domain")), Some("users"), None);
+        let lc = builtin_layer_config();
         let ctx = EvalContext {
             source: &source,
             target: &target,
+            layer_config: &lc,
         };
 
         assert!(evaluate("source.layer == target.layer", &ctx).unwrap());
@@ -428,11 +482,13 @@ mod tests {
 
     #[test]
     fn test_evaluate_logical_ops() {
-        let source = make_spec("a", Some(Layer::Interface), Some("x"), None);
-        let target = make_spec("b", Some(Layer::Domain), Some("y"), None);
+        let source = make_spec("a", Some(Layer::new("interface")), Some("x"), None);
+        let target = make_spec("b", Some(Layer::new("domain")), Some("y"), None);
+        let lc = builtin_layer_config();
         let ctx = EvalContext {
             source: &source,
             target: &target,
+            layer_config: &lc,
         };
 
         assert!(evaluate(
@@ -446,29 +502,38 @@ mod tests {
 
     #[test]
     fn test_evaluate_can_depend_on() {
-        let source = make_spec("a", Some(Layer::Domain), None, Some(Stability::Stable));
+        let source = make_spec(
+            "a",
+            Some(Layer::new("domain")),
+            None,
+            Some(Stability::Stable),
+        );
         let target_infra = make_spec(
             "b",
-            Some(Layer::Infrastructure),
+            Some(Layer::new("infrastructure")),
             None,
             Some(Stability::Stable),
         );
         let target_app = make_spec(
             "c",
-            Some(Layer::Application),
+            Some(Layer::new("application")),
             None,
             Some(Stability::Volatile),
         );
 
+        let lc = builtin_layer_config();
+
         let ctx1 = EvalContext {
             source: &source,
             target: &target_infra,
+            layer_config: &lc,
         };
         assert!(evaluate("source.layer.can_depend_on(target.layer)", &ctx1).unwrap());
 
         let ctx2 = EvalContext {
             source: &source,
             target: &target_app,
+            layer_config: &lc,
         };
         assert!(!evaluate("source.layer.can_depend_on(target.layer)", &ctx2).unwrap());
 
@@ -476,8 +541,38 @@ mod tests {
         let ctx3 = EvalContext {
             source: &source,
             target: &target_app,
+            layer_config: &lc,
         };
         assert!(!evaluate("source.stability.can_depend_on(target.stability)", &ctx3).unwrap());
+    }
+
+    #[test]
+    fn test_evaluate_can_depend_on_custom_layers() {
+        let layers = vec![
+            "ui".to_string(),
+            "logic".to_string(),
+            "data".to_string(),
+        ];
+        let lc = LayerConfig::from_linear(&layers);
+
+        let source = make_spec("a", Some(Layer::new("data")), None, None);
+        let target = make_spec("b", Some(Layer::new("ui")), None, None);
+
+        let ctx = EvalContext {
+            source: &source,
+            target: &target,
+            layer_config: &lc,
+        };
+        // data cannot depend on ui (ui is above data)
+        assert!(!evaluate("source.layer.can_depend_on(target.layer)", &ctx).unwrap());
+
+        // Reverse: ui can depend on data
+        let ctx2 = EvalContext {
+            source: &target,
+            target: &source,
+            layer_config: &lc,
+        };
+        assert!(evaluate("source.layer.can_depend_on(target.layer)", &ctx2).unwrap());
     }
 
     #[test]
@@ -491,22 +586,24 @@ mod tests {
 
     #[test]
     fn test_check_dependency_layer_violation() {
-        let source = make_spec("infra", Some(Layer::Infrastructure), None, None);
-        let target = make_spec("domain", Some(Layer::Domain), None, None);
+        let source = make_spec("infra", Some(Layer::new("infrastructure")), None, None);
+        let target = make_spec("domain", Some(Layer::new("domain")), None, None);
         let rules = builtin_rules();
+        let lc = builtin_layer_config();
 
-        let violations = check_dependency(&source, &target, &rules);
+        let violations = check_dependency(&source, &target, &rules, &lc);
         assert!(!violations.is_empty());
         assert!(violations.iter().any(|v| v.rule_name == "layer-direction"));
     }
 
     #[test]
     fn test_check_dependency_context_violation() {
-        let source = make_spec("payments", Some(Layer::Domain), Some("payments"), None);
-        let target = make_spec("users", Some(Layer::Domain), Some("users"), None);
+        let source = make_spec("payments", Some(Layer::new("domain")), Some("payments"), None);
+        let target = make_spec("users", Some(Layer::new("domain")), Some("users"), None);
         let rules = builtin_rules();
+        let lc = builtin_layer_config();
 
-        let violations = check_dependency(&source, &target, &rules);
+        let violations = check_dependency(&source, &target, &rules, &lc);
         assert!(violations
             .iter()
             .any(|v| v.rule_name == "context-isolation"));
@@ -514,19 +611,19 @@ mod tests {
 
     #[test]
     fn test_custom_rule() {
-        // Custom rule: modules named "test_*" cannot depend on production modules
         let rule = Rule {
             name: "no-test-to-prod".to_string(),
             description: Some("Test modules cannot depend on production code".to_string()),
-            when: "true".to_string(), // Would need starts_with support for real use
-            require: "source.module != target.module".to_string(), // Simplified
+            when: "true".to_string(),
+            require: "source.module != target.module".to_string(),
             severity: Severity::Warning,
         };
 
         let source = make_spec("test_a", None, None, None);
         let target = make_spec("test_a", None, None, None);
+        let lc = builtin_layer_config();
 
-        let violations = check_dependency(&source, &target, &[rule]);
+        let violations = check_dependency(&source, &target, &[rule], &lc);
         assert!(!violations.is_empty());
     }
 }

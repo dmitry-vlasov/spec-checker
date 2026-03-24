@@ -1,24 +1,21 @@
 # Spec Checker - Rules module (DSL engine)
+# Inherits: language=rust, context=core, stability=stable (root)
 
 module: rules
-language: rust
 source_path: src/rules.rs
 
-# Architectural attributes
 layer: domain
-context: core
-stability: stable
 
 exposes:
   builtin_rules:
     signature: "() -> Vec<Rule>"
     ensures:
       - Returns layer-direction rule
-      - Returns context-isolation rule  
+      - Returns context-isolation rule
       - Returns stability-direction rule
 
   check_dependency:
-    signature: "(source: &ModuleSpec, target: &ModuleSpec, rules: &[Rule]) -> Vec<RuleViolation>"
+    signature: "(source: &ModuleSpec, target: &ModuleSpec, rules: &[Rule], layer_config: &LayerConfig) -> Vec<RuleViolation>"
     requires:
       - rules is not empty
     ensures:
@@ -44,11 +41,10 @@ internal:
   - eval_can_depend_on
   - eval_exists
   - split_binary_op
-  - parse_layer_literal
   - parse_stability_literal
   - default_when
 
-# Data structures: Rule, RulesConfig, Severity, EvalContext, RuleViolation
+# Data structures: Rule, RulesConfig, Severity, EvalContext, RuleViolation, LayersInput, LayerDepsInput
 
 depends_on:
   - src/spec.rs

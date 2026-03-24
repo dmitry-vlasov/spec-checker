@@ -1,13 +1,10 @@
 # Spec Checker - Checker module
+# Inherits: language=rust, context=core, stability=stable (root)
 
 module: checker
-language: rust
 source_path: src/checker.rs
 
-# Architectural attributes
-layer: application       # Changed: application layer orchestrates domain + infrastructure
-context: core
-stability: stable
+layer: application       # Orchestrates domain + infrastructure
 
 exposes:
   new:
@@ -26,6 +23,7 @@ exposes:
     ensures:
       - Removes disabled built-in rules
       - Adds custom rules from config
+      - Applies custom layer config if provided
 
   check:
     signature: "(&self, spec: &ModuleSpec) -> Result<CheckResult>"

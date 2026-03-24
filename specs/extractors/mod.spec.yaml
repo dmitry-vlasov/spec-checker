@@ -1,13 +1,9 @@
 # Spec Checker - Extractors module
+# Inherits: language=rust, context=core, stability=stable (root)
+# Inherits: layer=infrastructure, forbidden_deps=[clap, colored] (extractors)
 
 module: extractors
-language: rust
 source_path: src/extractors/mod.rs
-
-# Architectural attributes
-layer: infrastructure
-context: core            # Changed: core context, same as spec/rules/checker
-stability: stable
 
 exposes:
   get_extractor:
@@ -30,8 +26,6 @@ external_deps:
   - anyhow
 
 forbidden_deps:
-  - clap          # no CLI concerns
-  - colored       # no output formatting
   - serde_yaml    # no YAML parsing
 
 invariants:

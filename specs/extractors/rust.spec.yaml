@@ -1,13 +1,9 @@
 # Spec Checker - Rust Extractor
+# Inherits: language=rust, context=core, stability=stable (root)
+# Inherits: layer=infrastructure, forbidden_deps=[clap, colored] (extractors)
 
 module: rust
-language: rust
 source_path: src/extractors/rust.rs
-
-# Architectural attributes
-layer: infrastructure
-context: core
-stability: stable
 
 exposes:
   # Note: signature check may show mismatch due to test code in string literals
@@ -38,7 +34,6 @@ external_deps:
 forbidden_deps:
   - regex         # use syn for proper parsing
   - serde_json    # Solidity-specific
-  - clap          # no CLI concerns
 
 invariants:
   - "Uses syn for proper AST parsing (not regex)"

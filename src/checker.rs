@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::extractors::{get_extractor, ExtractedModule};
 use crate::rules::{self, Rule, RulesConfig, Severity as RuleSeverity};
-use crate::spec::ModuleSpec;
+use crate::spec::{LayerConfig, ModuleSpec};
 
 /// Result of checking a spec against implementation
 #[derive(Debug, Default)]
@@ -36,6 +36,8 @@ pub struct SpecChecker {
     spec_map: HashMap<String, ModuleSpec>,
     /// Active rules (built-in + custom)
     rules: Vec<Rule>,
+    /// Layer dependency configuration
+    layer_config: LayerConfig,
 }
 
 impl SpecChecker {
@@ -44,6 +46,7 @@ impl SpecChecker {
             source_root,
             spec_map: HashMap::new(),
             rules: rules::builtin_rules(),
+            layer_config: LayerConfig::builtin(),
         }
     }
 
@@ -57,7 +60,7 @@ impl SpecChecker {
         self
     }
 
-    /// Configure custom rules
+    /// Configure custom rules and layer definitions
     pub fn with_rules_config(mut self, config: &RulesConfig) -> Self {
         // Remove disabled built-in rules
         self.rules
@@ -65,6 +68,11 @@ impl SpecChecker {
 
         // Add custom rules
         self.rules.extend(config.rules.clone());
+
+        // Apply custom layer config if provided
+        if let Some(ref layers_input) = config.layers {
+            self.layer_config = layers_input.to_layer_config();
+        }
 
         self
     }
@@ -165,7 +173,8 @@ impl SpecChecker {
             };
 
             // Check all rules against this dependency
-            let violations = rules::check_dependency(spec, target_spec, &self.rules);
+            let violations =
+                rules::check_dependency(spec, target_spec, &self.rules, &self.layer_config);
 
             for violation in violations {
                 match violation.severity {
@@ -510,7 +519,7 @@ pub fn domain_function() {}
             module: "infra".to_string(),
             language: Some("rust".to_string()),
             source_path: Some("src/infra.rs".to_string()),
-            layer: Some(Layer::Infrastructure),
+            layer: Some(Layer::new("infrastructure")),
             depends_on: vec!["src/domain.rs".to_string()], // Infrastructure depending on Domain!
             ..Default::default()
         };
@@ -520,7 +529,7 @@ pub fn domain_function() {}
             module: "domain".to_string(),
             language: Some("rust".to_string()),
             source_path: Some("src/domain.rs".to_string()),
-            layer: Some(Layer::Domain),
+            layer: Some(Layer::new("domain")),
             ..Default::default()
         };
 
@@ -554,7 +563,7 @@ pub fn domain_function() {}
             module: "domain".to_string(),
             language: Some("rust".to_string()),
             source_path: Some("src/domain.rs".to_string()),
-            layer: Some(Layer::Domain),
+            layer: Some(Layer::new("domain")),
             depends_on: vec!["src/infra.rs".to_string()],
             ..Default::default()
         };
@@ -563,7 +572,7 @@ pub fn domain_function() {}
             module: "infra".to_string(),
             language: Some("rust".to_string()),
             source_path: Some("src/infra.rs".to_string()),
-            layer: Some(Layer::Infrastructure),
+            layer: Some(Layer::new("infrastructure")),
             ..Default::default()
         };
 
@@ -661,7 +670,7 @@ contract Bridge {
             module: "payments".to_string(),
             language: Some("rust".to_string()),
             source_path: Some("src/payments.rs".to_string()),
-            layer: Some(Layer::Domain),
+            layer: Some(Layer::new("domain")),
             context: Some("payments".to_string()),
             depends_on: vec!["src/users.rs".to_string()],
             ..Default::default()
@@ -671,7 +680,7 @@ contract Bridge {
             module: "users".to_string(),
             language: Some("rust".to_string()),
             source_path: Some("src/users.rs".to_string()),
-            layer: Some(Layer::Domain),
+            layer: Some(Layer::new("domain")),
             context: Some("users".to_string()),
             ..Default::default()
         };
@@ -705,7 +714,7 @@ contract Bridge {
             module: "payments_api".to_string(),
             language: Some("rust".to_string()),
             source_path: Some("src/payments_api.rs".to_string()),
-            layer: Some(Layer::Interface),
+            layer: Some(Layer::new("interface")),
             context: Some("payments".to_string()),
             depends_on: vec!["src/users_api.rs".to_string()],
             ..Default::default()
@@ -715,7 +724,7 @@ contract Bridge {
             module: "users_api".to_string(),
             language: Some("rust".to_string()),
             source_path: Some("src/users_api.rs".to_string()),
-            layer: Some(Layer::Interface),
+            layer: Some(Layer::new("interface")),
             context: Some("users".to_string()),
             ..Default::default()
         };

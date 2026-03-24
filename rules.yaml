@@ -5,7 +5,7 @@ rules:
   # Core modules must be stable
   - name: core-stability
     description: "Core context modules must have stable stability"
-    when: "source.context == core AND source.stability.exists"
+    when: "source.context == 'core' AND source.stability.exists"
     require: "source.stability == stable"
     severity: error
 
@@ -13,9 +13,25 @@ rules:
   # but nothing should depend on CLI
   - name: no-depend-on-cli
     description: "Non-CLI modules should not depend on CLI module"
-    when: "target.context == cli AND source.context != cli"
+    when: "target.context == 'cli' AND source.context != 'cli'"
     require: "false"
     severity: error
+
+  # Language-specific extractors are leaf modules — they must not
+  # depend on each other, only on the extractors facade
+  - name: extractor-independence
+    description: "Language-specific extractors must not depend on each other (only on the extractors facade)"
+    when: "source.layer == infrastructure AND target.layer == infrastructure AND source.module != target.module"
+    require: "source.module == 'extractors' OR target.module == 'extractors'"
+    severity: error
+
+  # Push volatility to the edges: non-stable modules should be
+  # at the interface layer, keeping the core stable
+  - name: volatility-at-edges
+    description: "Non-stable modules should live at the interface layer"
+    when: "source.stability.exists AND source.stability != stable AND source.layer.exists"
+    require: "source.layer == interface"
+    severity: warning
 
 # Keep all built-in rules enabled
 disable_builtin: []

@@ -9,7 +9,7 @@ mod rules;
 mod spec;
 
 use checker::SpecChecker;
-use spec::ModuleSpec;
+use spec::{ModuleSpec, resolve_defaults};
 
 #[derive(Parser)]
 #[command(name = "spec-checker")]
@@ -255,15 +255,35 @@ fn load_specs(path: &PathBuf) -> Result<Vec<ModuleSpec>> {
     let mut specs = Vec::new();
 
     if path.is_file() {
-        specs.push(load_spec(path)?);
+        let mut spec = load_spec(path)?;
+        // Apply defaults from the spec file's directory up to its parent
+        if let Some(dir) = path.parent() {
+            let root = dir; // single file: use its directory as root
+            let defaults = resolve_defaults(dir, root);
+            spec.apply_defaults(&defaults);
+        }
+        specs.push(spec);
     } else if path.is_dir() {
+        let root = path.as_path();
+
         for entry in glob::glob(&format!("{}/**/*.spec.yaml", path.display()))? {
             let entry = entry?;
-            specs.push(load_spec(&entry)?);
+            let mut spec = load_spec(&entry)?;
+            // Apply hierarchical defaults from root down to this spec's directory
+            if let Some(dir) = entry.parent() {
+                let defaults = resolve_defaults(dir, root);
+                spec.apply_defaults(&defaults);
+            }
+            specs.push(spec);
         }
         for entry in glob::glob(&format!("{}/**/*.spec.yml", path.display()))? {
             let entry = entry?;
-            specs.push(load_spec(&entry)?);
+            let mut spec = load_spec(&entry)?;
+            if let Some(dir) = entry.parent() {
+                let defaults = resolve_defaults(dir, root);
+                spec.apply_defaults(&defaults);
+            }
+            specs.push(spec);
         }
     }
 

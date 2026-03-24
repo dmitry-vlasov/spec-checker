@@ -1,13 +1,9 @@
 # Spec Checker - Solidity Extractor
+# Inherits: language=rust, context=core, stability=stable (root)
+# Inherits: layer=infrastructure, forbidden_deps=[clap, colored] (extractors)
 
 module: solidity
-language: rust
 source_path: src/extractors/solidity.rs
-
-# Architectural attributes
-layer: infrastructure
-context: core
-stability: stable
 
 exposes:
   new:
@@ -36,7 +32,6 @@ external_deps:
 
 forbidden_deps:
   - syn           # Rust-specific
-  - clap          # no CLI concerns
   - serde_yaml    # no YAML parsing
 
 invariants:

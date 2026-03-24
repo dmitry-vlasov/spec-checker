@@ -18,6 +18,36 @@ Human intent → Spec (human-sized) → Checker → Code (AI-sized)
 4. **Prevent Drift**: Shortcuts violate spec → CI fails → architecture preserved
 5. **Multi-Agent Coordination**: Specs define contracts between agents working on different modules
 
+## Hierarchical Specs
+
+For larger projects, per-file specs don't scale. Use `_defaults.yaml` files to set directory-level defaults with per-file overrides:
+
+```
+specs/
+  _defaults.yaml              # root defaults: language, context, stability
+  checker.spec.yaml            # inherits root defaults
+  main.spec.yaml               # overrides context=cli, stability=normal
+  extractors/
+    _defaults.yaml             # layer=infrastructure, extra forbidden_deps
+    mod.spec.yaml              # inherits both root + extractors defaults
+    rust.spec.yaml             # inherits both, adds own forbidden_deps
+    solidity.spec.yaml
+```
+
+**`_defaults.yaml` example:**
+```yaml
+language: rust
+context: core
+stability: stable
+forbidden_deps:
+  - clap
+```
+
+**Inheritance rules:**
+- **Scalar fields** (language, layer, context, stability): child overrides parent
+- **List fields** (forbidden_deps, external_deps, forbidden_external): child merges (union) with parent
+- Per-file specs override defaults — explicitly set fields are never overwritten
+
 ## Spec Format
 
 Unified YAML format for both structural and behavioral specifications:
@@ -75,6 +105,8 @@ The spec-checker enforces three orthogonal architectural constraints:
 
 ### Layer (Vertical Stratification)
 
+The default 4-layer model:
+
 ```
 Interface → Application → Domain → Infrastructure
 ```
@@ -83,6 +115,34 @@ Interface → Application → Domain → Infrastructure
 - **Domain**: Can only depend on Infrastructure
 - **Application**: Can depend on Domain and Infrastructure
 - **Interface**: Can depend on anything
+
+#### Custom Layers
+
+Define your own layers in `rules.yaml`. Two formats:
+
+**Linear hierarchy** (each layer can depend on all layers below):
+```yaml
+layers:
+  - presentation
+  - application
+  - domain
+  - persistence
+```
+
+**Explicit DAG** (full control over allowed dependencies):
+```yaml
+layers:
+  api:
+    can_depend_on: [service, model]
+  service:
+    can_depend_on: [model, repository]
+  repository:
+    can_depend_on: [model]
+  model:
+    can_depend_on: []
+```
+
+When no `layers` config is provided, the built-in 4-layer model is used.
 
 ### Context (Horizontal Segmentation)
 
@@ -236,6 +296,8 @@ PASSED: 11 warning(s)
 - [x] Return type extraction in signatures
 - [x] Events checking (emits)
 - [x] Rule DSL for custom architectural constraints
+- [x] Hierarchical specs (`_defaults.yaml` with directory-level inheritance)
+- [x] Configurable layers (user-defined layer names with linear or DAG dependencies)
 
 ### In Progress
 - [ ] Subscribes checking (requires function body analysis)
