@@ -24,7 +24,9 @@ impl Extractor for Flow9Extractor {
     }
 }
 
-fn parse_flow9(content: &str, path: &PathBuf) -> Result<ExtractedModule> {
+fn parse_flow9(raw_content: &str, path: &PathBuf) -> Result<ExtractedModule> {
+    // Strip comments before any parsing
+    let content = &strip_comments(raw_content);
     let mut module = ExtractedModule {
         name: path
             .file_stem()
@@ -286,9 +288,45 @@ fn extract_exported_names(content: &str) -> HashSet<String> {
     names
 }
 
+/// Strip // and /* */ comments from a string
+fn strip_comments(s: &str) -> String {
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '/' {
+            if chars.peek() == Some(&'/') {
+                // Line comment: skip to end of line
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        result.push('\n');
+                        break;
+                    }
+                }
+            } else if chars.peek() == Some(&'*') {
+                // Block comment: skip to */
+                chars.next(); // consume *
+                while let Some(c) = chars.next() {
+                    if c == '*' && chars.peek() == Some(&'/') {
+                        chars.next();
+                        break;
+                    }
+                }
+            } else {
+                result.push(ch);
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
 /// Parse struct fields from a string like "field1 : type1, field2 : type2"
 fn parse_struct_fields(fields_str: &str) -> Vec<FieldInfo> {
-    if fields_str.trim().is_empty() {
+    // Strip comments first
+    let fields_str = strip_comments(fields_str);
+    let fields_str = fields_str.trim();
+    if fields_str.is_empty() {
         return vec![];
     }
 
