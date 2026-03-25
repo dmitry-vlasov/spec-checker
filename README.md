@@ -50,6 +50,9 @@ exposes:
     requires: [valid_signature, not already_executed]
     ensures: [withdrawn <= deposited]
 
+  defaultBridge:
+    kind: variable
+
 depends_on:
   - TokenRegistry
   - SignerRegistry
@@ -72,6 +75,7 @@ Methods are qualified with their parent type using dot notation (language-agnost
 Each entry in `exposes` has a `kind` field:
 - `kind: function` — functions and methods
 - `kind: type` — structs, enums, traits, interfaces
+- `kind: variable` — global constants and static variables
 
 ## Type Formula DSL
 
@@ -253,7 +257,7 @@ Results are cached in `.spec-cache/` keyed by `sha256(code + invariant)`. Unchan
 |----------|-----------|--------|
 | Rust | syn AST (full type extraction) | Working |
 | Solidity | solc AST + regex fallback | Working |
-| Flow9 | Regex (exports, structs, unions, functions) | Working |
+| Flow9 | Regex (exports, structs, unions, functions, variables) | Working |
 | TypeScript | - | Planned |
 
 ## Installation
