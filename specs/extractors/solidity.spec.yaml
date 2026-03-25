@@ -22,14 +22,6 @@ exposes:
 # Implements Extractor trait (via impl block):
 #   extract(&self, path: &PathBuf) -> Result<ExtractedModule>
 
-internal:
-  - parse_solidity_ast
-  - parse_solidity_regex
-  - extract_from_solc_output
-  - extract_from_ast_node
-  - extract_from_node
-  - format_function_signature
-
 depends_on: []
 
 external_deps:

@@ -22,18 +22,6 @@ exposes:
 # Implements Extractor trait (via impl block):
 #   extract(&self, path: &PathBuf) -> Result<ExtractedModule>
 
-internal:
-  - RustVisitor.format_fn_signature
-  - RustVisitor.format_method_signature
-  - RustVisitor.format_signature
-  - RustVisitor.flatten_use_tree
-  - RustVisitor.get_root_crate
-  - RustVisitor.is_public
-  - RustVisitor.syn_type_to_repr
-  - RustVisitor.extract_generics
-  - RustVisitor.extract_derives
-  - RustVisitor.build_function_info
-
 depends_on: []
 
 external_deps:

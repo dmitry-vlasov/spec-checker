@@ -13,14 +13,6 @@ stability: normal
 # CLI is exposed via clap derive macros on Cli struct
 exposes: {}
 
-internal:
-  - cmd_check
-  - cmd_init
-  - cmd_diff
-  - load_specs
-  - load_spec
-  - detect_language
-
 depends_on:
   - src/checker.rs
   - src/extractors/mod.rs

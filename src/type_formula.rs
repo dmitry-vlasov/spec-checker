@@ -53,6 +53,7 @@ pub enum Predicate {
     IsProduct(TypeExpr),
     IsFunction(TypeExpr),
     HasField(TypeExpr, String),
+    HasMethod(TypeExpr, String),
     HasVariant(TypeExpr, String),
     Cloneable(TypeExpr),
     Serializable(TypeExpr),
@@ -77,6 +78,7 @@ pub struct TypeEvalContext<'a> {
     pub self_type: Option<&'a TypeInfo>,
     pub function: Option<&'a FunctionInfo>,
     pub type_defs: &'a HashMap<String, TypeInfo>,
+    pub function_defs: &'a HashMap<String, FunctionInfo>,
 }
 
 /// Parse a formula string into a Formula AST
@@ -559,6 +561,15 @@ impl<'a> FormulaParser<'a> {
                 let field = self.expect_ident()?;
                 self.expect(&Token::RParen)?;
                 Ok(Formula::Pred(Predicate::HasField(t, field)))
+            }
+            "has_method" => {
+                self.advance();
+                self.expect(&Token::LParen)?;
+                let t = self.parse_type_expr()?;
+                self.expect(&Token::Comma)?;
+                let method = self.expect_ident()?;
+                self.expect(&Token::RParen)?;
+                Ok(Formula::Pred(Predicate::HasMethod(t, method)))
             }
             "has_variant" => {
                 self.advance();
@@ -1207,6 +1218,22 @@ fn evaluate_predicate(
             }
             Ok(false)
         }
+        Predicate::HasMethod(t, method_name) => {
+            let repr = evaluate_type_expr(t, ctx)?;
+            let type_name = extract_type_name(strip_references(&repr));
+            if let Some(tn) = type_name {
+                let qualified = format!("{}.{}", tn, method_name);
+                return Ok(ctx.function_defs.contains_key(&qualified));
+            }
+            // Check self_type
+            if let Some(ti) = ctx.self_type {
+                if repr == TypeRepr::Named(ti.name.clone()) {
+                    let qualified = format!("{}.{}", ti.name, method_name);
+                    return Ok(ctx.function_defs.contains_key(&qualified));
+                }
+            }
+            Ok(false)
+        }
         Predicate::HasVariant(t, name) => {
             let repr = evaluate_type_expr(t, ctx)?;
             let type_name = extract_type_name(&repr);
@@ -1591,10 +1618,13 @@ mod tests {
         func_info: Option<&'a FunctionInfo>,
         type_defs: &'a HashMap<String, TypeInfo>,
     ) -> TypeEvalContext<'a> {
+        static EMPTY_FN_DEFS: std::sync::LazyLock<HashMap<String, FunctionInfo>> =
+            std::sync::LazyLock::new(HashMap::new);
         TypeEvalContext {
             self_type: type_info,
             function: func_info,
             type_defs,
+            function_defs: &EMPTY_FN_DEFS,
         }
     }
 

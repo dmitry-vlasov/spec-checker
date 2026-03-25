@@ -131,10 +131,6 @@ pub struct ModuleSpec {
     #[serde(default)]
     pub exposes: HashMap<String, ExposeSpec>,
 
-    /// Internal/private functions (should not be exposed)
-    #[serde(default)]
-    pub internal: Vec<String>,
-
     /// Allowed module dependencies
     #[serde(default)]
     pub depends_on: Vec<String>,
@@ -419,7 +415,6 @@ impl ModuleSpec {
             language: Some(extracted.language.clone()),
             source_path: extracted.source_path.clone(),
             exposes,
-            internal: extracted.private_functions.clone(),
             depends_on: Vec::new(),
             forbidden_deps: Vec::new(),
             external_deps: extracted.imports.clone(),
@@ -694,7 +689,6 @@ invariants:
         assert_eq!(spec.exposes.len(), 2);
         assert!(spec.exposes.contains_key("deposit"));
         assert!(spec.exposes.contains_key("withdraw"));
-        assert_eq!(spec.internal.len(), 2);
         assert_eq!(spec.depends_on.len(), 2);
         assert_eq!(spec.forbidden_deps.len(), 1);
         assert_eq!(spec.invariants.len(), 1);

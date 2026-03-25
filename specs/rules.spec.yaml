@@ -89,15 +89,6 @@ exposes:
       - Supports property access (source.X, target.X)
       - Supports can_depend_on method calls
 
-internal:
-  - eval_value
-  - eval_module_property
-  - eval_can_depend_on
-  - eval_exists
-  - split_binary_op
-  - parse_stability_literal
-  - default_when
-
 depends_on:
   - src/spec.rs
 

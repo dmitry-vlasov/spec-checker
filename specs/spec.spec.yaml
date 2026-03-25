@@ -15,7 +15,6 @@ exposes:
       - "cloneable"
       - "has_field(Self, module)"
       - "has_field(Self, exposes)"
-      - "has_field(Self, internal)"
       - "has_field(Self, depends_on)"
       - "has_field(Self, forbidden_deps)"
       - "has_field(Self, layer)"
@@ -130,9 +129,6 @@ exposes:
       - Walks directory chain from root_dir to spec_dir
       - Loads _defaults.yaml at each level
       - Merges defaults (parent first, child overlays)
-
-internal:
-  - merge_optional_vecs
 
 depends_on:
   - src/extractors/mod.rs    # Uses ExtractedModule type

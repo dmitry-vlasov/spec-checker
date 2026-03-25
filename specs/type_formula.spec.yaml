@@ -108,19 +108,6 @@ exposes:
       - Returns Unit for "()"
       - Returns Infer for "_"
 
-internal:
-  - tokenize
-  - parse_type_literal_from
-  - parse_ref_type_literal
-  - parse_bracket_type_literal
-  - find_angle_bracket
-  - find_matching_paren
-  - split_type_args
-  - evaluate_type_expr
-  - evaluate_predicate
-  - extract_type_name
-  - check_trait_or_derive
-
 depends_on:
   - src/types.rs
 

@@ -122,7 +122,6 @@ impl SpecChecker {
 
         // Run all checks
         self.check_exposes(spec, &extracted, &mut result);
-        self.check_internal(spec, &extracted, &mut result);
         self.check_dependencies(spec, &extracted, &mut result);
         self.check_forbidden_deps(spec, &extracted, &mut result);
         self.check_architectural_constraints(spec, &mut result);
@@ -198,6 +197,7 @@ impl SpecChecker {
                         self_type: Some(ti),
                         function: None,
                         type_defs: &extracted.type_definitions,
+                        function_defs: &extracted.function_info,
                     };
                     self.eval_constraints(name, &expose_spec.type_constraints, &ctx, result);
                 }
@@ -218,6 +218,7 @@ impl SpecChecker {
                     self_type: None,
                     function: Some(fi),
                     type_defs: &extracted.type_definitions,
+                    function_defs: &extracted.function_info,
                 };
                 self.eval_constraints(name, &expose_spec.type_constraints, &ctx, result);
             }
@@ -335,23 +336,6 @@ impl SpecChecker {
                         }
                     }
                 }
-            }
-        }
-    }
-
-    /// Check that internal functions are not exposed
-    fn check_internal(
-        &self,
-        spec: &ModuleSpec,
-        extracted: &ExtractedModule,
-        result: &mut CheckResult,
-    ) {
-        for name in &spec.internal {
-            if extracted.public_functions.contains(name) {
-                result.error(format!(
-                    "Function '{}' is specified as internal but is public in implementation",
-                    name
-                ));
             }
         }
     }
@@ -499,7 +483,6 @@ mod tests {
             language: Some("solidity".to_string()),
             source_path: Some("Bridge.sol".to_string()),
             exposes,
-            internal: vec!["_verifySignature".to_string()],
             depends_on: vec!["TokenRegistry".to_string()],
             forbidden_deps: vec!["TestUtils".to_string()],
             ..Default::default()
@@ -526,29 +509,6 @@ contract Bridge {
 
         assert!(!result.is_ok());
         assert!(result.errors.iter().any(|e| e.contains("withdraw")));
-    }
-
-    #[test]
-    fn test_check_internal_exposed() {
-        let dir = TempDir::new().unwrap();
-
-        // Create a source file where internal function is public
-        let content = r#"
-contract Bridge {
-    function deposit(address token, uint256 amount) public {}
-    function withdraw(address token, uint256 amount) public {}
-    function _verifySignature(bytes memory sig) public {} // Should be internal!
-}
-"#;
-        std::fs::write(dir.path().join("Bridge.sol"), content).unwrap();
-
-        let checker = SpecChecker::new(dir.path().to_path_buf());
-        let spec = create_test_spec();
-
-        let result = checker.check(&spec).unwrap();
-
-        assert!(!result.is_ok());
-        assert!(result.errors.iter().any(|e| e.contains("_verifySignature")));
     }
 
     #[test]

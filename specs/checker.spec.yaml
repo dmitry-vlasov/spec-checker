@@ -77,18 +77,6 @@ exposes:
       - Returns errors for architectural rule violations
       - Returns warnings for unlisted dependencies
 
-internal:
-  - SpecChecker.check_exposes
-  - SpecChecker.check_internal
-  - SpecChecker.check_dependencies
-  - SpecChecker.check_forbidden_deps
-  - SpecChecker.check_architectural_constraints
-  - SpecChecker.check_events
-  - SpecChecker.check_type_constraints
-  - SpecChecker.eval_constraints
-  - SpecChecker.find_source_file
-  - SpecChecker.extract_module_name
-
 depends_on:
   - src/extractors/mod.rs
   - src/spec.rs
