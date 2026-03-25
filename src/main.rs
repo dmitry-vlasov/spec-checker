@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use colored::*;
 use std::path::PathBuf;
 
+mod behavioral;
 mod checker;
 mod extractors;
 mod rules;
@@ -41,6 +42,14 @@ enum Commands {
         /// Rules configuration file (YAML)
         #[arg(short, long)]
         rules: Option<PathBuf>,
+
+        /// LLM behavioral check mode: off, dry-run, cached-only, full
+        #[arg(long, default_value = "off")]
+        llm_check: String,
+
+        /// LLM model to use for behavioral checks
+        #[arg(long, default_value = "claude-haiku-4-5-20251001")]
+        llm_model: String,
     },
 
     /// Generate spec skeleton from existing code
@@ -76,7 +85,9 @@ fn main() -> Result<()> {
             source,
             format,
             rules,
-        } => cmd_check(&path, &source, &format, rules.as_ref()),
+            llm_check,
+            llm_model,
+        } => cmd_check(&path, &source, &format, rules.as_ref(), &llm_check, &llm_model),
         Commands::Init {
             source,
             language,
@@ -91,7 +102,12 @@ fn cmd_check(
     source_root: &PathBuf,
     _format: &str,
     rules_path: Option<&PathBuf>,
+    llm_check_mode: &str,
+    llm_model: &str,
 ) -> Result<()> {
+    let llm_mode: behavioral::LlmCheckMode = llm_check_mode
+        .parse()
+        .map_err(|e: String| anyhow::anyhow!(e))?;
     println!("{}", "Spec Checker".bold().cyan());
     println!("{}", "=".repeat(40));
     println!();
@@ -149,6 +165,110 @@ fn cmd_check(
         }
 
         println!();
+    }
+
+    // ── Behavioral checks ──────────────────────────────────────────────────
+    if llm_mode != behavioral::LlmCheckMode::Off {
+        println!();
+        println!("{}", "Behavioral Checks".bold().cyan());
+        println!("{}", "-".repeat(40));
+
+        let cache_dir = source_root.join(".spec-cache");
+        let api_key = std::env::var("ANTHROPIC_API_KEY").ok();
+
+        let rt = tokio::runtime::Runtime::new()?;
+        let mut behavioral_total = behavioral::BehavioralSummary::default();
+
+        for spec in &specs {
+            // Read source file for behavioral analysis
+            let source_code = if let Some(sp) = &spec.source_path {
+                let full_path = source_root.join(sp);
+                std::fs::read_to_string(&full_path).unwrap_or_default()
+            } else {
+                String::new()
+            };
+
+            if source_code.is_empty() {
+                continue;
+            }
+
+            let summary = rt.block_on(behavioral::check_behavioral(
+                spec,
+                &source_code,
+                &llm_mode,
+                &cache_dir,
+                api_key.as_deref(),
+                llm_model,
+            ));
+
+            if summary.static_passed + summary.static_failed + summary.llm_passed
+                + summary.llm_failed + summary.skipped
+                > 0
+            {
+                println!("{} {}", "Module:".bold(), spec.module.cyan());
+                if summary.static_passed > 0 {
+                    println!(
+                        "  {} {} static invariant(s) satisfied",
+                        "✓".green(),
+                        summary.static_passed
+                    );
+                }
+                if summary.static_failed > 0 {
+                    println!(
+                        "  {} {} static invariant(s) failed",
+                        "✗".red(),
+                        summary.static_failed
+                    );
+                }
+                if summary.llm_passed > 0 {
+                    println!(
+                        "  {} {} behavioral invariant(s) satisfied (LLM-verified{})",
+                        "✓".green(),
+                        summary.llm_passed,
+                        if summary.cached > 0 {
+                            format!(", {} cached", summary.cached)
+                        } else {
+                            String::new()
+                        }
+                    );
+                }
+                if summary.llm_failed > 0 {
+                    println!(
+                        "  {} {} behavioral invariant(s) failed (LLM-verified)",
+                        "✗".red(),
+                        summary.llm_failed
+                    );
+                }
+                if summary.skipped > 0 {
+                    println!(
+                        "  {} {} invariant(s) skipped",
+                        "○".blue(),
+                        summary.skipped
+                    );
+                }
+                for (inv, reasoning) in &summary.failures {
+                    println!("    {} {}: {}", "→".red(), inv, reasoning);
+                }
+            }
+
+            behavioral_total.static_passed += summary.static_passed;
+            behavioral_total.static_failed += summary.static_failed;
+            behavioral_total.llm_passed += summary.llm_passed;
+            behavioral_total.llm_failed += summary.llm_failed;
+            behavioral_total.cached += summary.cached;
+            behavioral_total.skipped += summary.skipped;
+            behavioral_total.failures.extend(summary.failures);
+        }
+
+        println!();
+        total_errors += behavioral_total.static_failed + behavioral_total.llm_failed;
+
+        if llm_mode == behavioral::LlmCheckMode::DryRun {
+            println!(
+                "{} Behavioral checks in dry-run mode (no LLM calls made)",
+                "ℹ".blue()
+            );
+        }
     }
 
     println!("{}", "=".repeat(40));
