@@ -8,14 +8,22 @@ layer: domain
 
 exposes:
   builtin_rules:
-    signature: "() -> Vec<Rule>"
+    kind: function
+    type_constraints:
+      - "equals(con(return), Vec)"
     ensures:
       - Returns layer-direction rule
       - Returns context-isolation rule
       - Returns stability-direction rule
 
   check_dependency:
-    signature: "(source: &ModuleSpec, target: &ModuleSpec, rules: &[Rule], layer_config: &LayerConfig) -> Vec<RuleViolation>"
+    kind: function
+    type_constraints:
+      - "equals(param(source), &ModuleSpec)"
+      - "equals(param(target), &ModuleSpec)"
+      - "equals(param(rules), &[Rule])"
+      - "equals(param(layer_config), &LayerConfig)"
+      - "equals(con(return), Vec)"
     requires:
       - rules is not empty
     ensures:
@@ -24,7 +32,11 @@ exposes:
       - Returns violation for each unsatisfied require
 
   evaluate:
-    signature: "(expr: &str, ctx: &EvalContext) -> Result<bool, String>"
+    kind: function
+    type_constraints:
+      - "equals(param(expr), &str)"
+      - "equals(param(ctx), &EvalContext)"
+      - "fallible(return)"
     requires:
       - expr is valid DSL expression
     ensures:

@@ -129,7 +129,7 @@ pub struct ModuleSpec {
 
     /// Publicly exposed functions with their contracts
     #[serde(default)]
-    pub exposes: HashMap<String, FunctionSpec>,
+    pub exposes: HashMap<String, ExposeSpec>,
 
     /// Internal/private functions (should not be exposed)
     #[serde(default)]
@@ -194,38 +194,48 @@ pub struct ModuleSpec {
     /// Role-based access control
     #[serde(default)]
     pub roles: Vec<String>,
+
 }
 
-/// Function-level specification (Design by Contract)
+/// Specification for an exposed entity (function, type, trait, etc.)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct FunctionSpec {
-    /// Function signature
+pub struct ExposeSpec {
+    /// Entity kind: "function", "struct", "enum", "trait", "type"
+    /// If omitted, defaults to "function" for backwards compatibility.
+    #[serde(default)]
+    pub kind: Option<String>,
+
+    /// Function signature (legacy, for backward compatibility)
     #[serde(default)]
     pub signature: Option<String>,
 
-    /// Preconditions (requires)
+    /// Preconditions (requires) — functions
     #[serde(default)]
     pub requires: Vec<String>,
 
-    /// Postconditions (ensures)
+    /// Postconditions (ensures) — functions and types
     #[serde(default)]
     pub ensures: Vec<String>,
 
-    /// Modifies clause (state changes)
+    /// Modifies clause (state changes) — functions
     #[serde(default)]
     pub modifies: Vec<String>,
 
-    /// Events emitted
+    /// Events emitted — functions
     #[serde(default)]
     pub emits: Vec<String>,
 
-    /// Allowed callers
+    /// Allowed callers — functions
     #[serde(default)]
     pub callable_by: Vec<String>,
 
     /// Function visibility (public, external, internal, private)
     #[serde(default)]
     pub visibility: Option<String>,
+
+    /// Type formula constraints
+    #[serde(default)]
+    pub type_constraints: Vec<String>,
 }
 
 /// Architectural layer — a user-defined string (e.g. "infrastructure", "domain").
@@ -396,7 +406,7 @@ impl ModuleSpec {
         let mut exposes = HashMap::new();
 
         for func in &extracted.public_functions {
-            let func_spec = FunctionSpec {
+            let func_spec = ExposeSpec {
                 signature: extracted.function_signatures.get(func).cloned(),
                 visibility: Some("public".to_string()),
                 ..Default::default()

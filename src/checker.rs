@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crate::extractors::{get_extractor, ExtractedModule};
 use crate::rules::{self, Rule, RulesConfig, Severity as RuleSeverity};
 use crate::spec::{LayerConfig, ModuleSpec};
+use crate::type_formula::{self, TypeEvalContext};
 
 /// Result of checking a spec against implementation
 #[derive(Debug, Default)]
@@ -126,6 +127,7 @@ impl SpecChecker {
         self.check_forbidden_deps(spec, &extracted, &mut result);
         self.check_architectural_constraints(spec, &mut result);
         self.check_events(spec, &extracted, &mut result);
+        self.check_type_constraints(spec, &extracted, &mut result);
 
         Ok(result)
     }
@@ -164,6 +166,99 @@ impl SpecChecker {
         // and language-specific, so we skip it for now
     }
 
+    /// Check type formula constraints for all exposed entities
+    fn check_type_constraints(
+        &self,
+        spec: &ModuleSpec,
+        extracted: &ExtractedModule,
+        result: &mut CheckResult,
+    ) {
+        for (name, expose_spec) in &spec.exposes {
+            if expose_spec.type_constraints.is_empty() && expose_spec.kind.is_none() {
+                continue;
+            }
+
+            let is_type = expose_spec.kind.as_deref() == Some("type");
+
+            if is_type {
+                // Type entity — look up in type_definitions
+                let type_info = extracted.type_definitions.get(name);
+
+                if type_info.is_none() && !expose_spec.type_constraints.is_empty() {
+                    result.error(format!(
+                        "Type '{}' is specified but not found in implementation",
+                        name
+                    ));
+                    continue;
+                }
+
+                // Evaluate type constraints
+                if let Some(ti) = type_info {
+                    let ctx = TypeEvalContext {
+                        self_type: Some(ti),
+                        function: None,
+                        type_defs: &extracted.type_definitions,
+                    };
+                    self.eval_constraints(name, &expose_spec.type_constraints, &ctx, result);
+                }
+            } else {
+                // Function entity — look up in function_info
+                if expose_spec.type_constraints.is_empty() {
+                    continue;
+                }
+
+                let func_info = extracted.function_info.get(name);
+                if func_info.is_none() {
+                    // Function existence is already checked by check_exposes
+                    continue;
+                }
+
+                let fi = func_info.unwrap();
+                let ctx = TypeEvalContext {
+                    self_type: None,
+                    function: Some(fi),
+                    type_defs: &extracted.type_definitions,
+                };
+                self.eval_constraints(name, &expose_spec.type_constraints, &ctx, result);
+            }
+        }
+    }
+
+    /// Evaluate a list of type constraint formulas against a context
+    fn eval_constraints(
+        &self,
+        entity_name: &str,
+        constraints: &[String],
+        ctx: &TypeEvalContext,
+        result: &mut CheckResult,
+    ) {
+        for constraint in constraints {
+            match type_formula::parse_formula(constraint) {
+                Ok(formula) => match type_formula::evaluate_formula(&formula, ctx) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        result.error(format!(
+                            "'{}' violates type constraint: {}",
+                            entity_name, constraint
+                        ));
+                    }
+                    Err(e) => {
+                        result.error(format!(
+                            "'{}' type constraint evaluation error for '{}': {}",
+                            entity_name, constraint, e
+                        ));
+                    }
+                },
+                Err(e) => {
+                    result.error(format!(
+                        "'{}' type constraint parse error for '{}': {}",
+                        entity_name, constraint, e
+                    ));
+                }
+            }
+        }
+    }
+
     /// Check all architectural constraints using rules engine
     fn check_architectural_constraints(&self, spec: &ModuleSpec, result: &mut CheckResult) {
         for dep_path in &spec.depends_on {
@@ -189,41 +284,54 @@ impl SpecChecker {
         }
     }
 
-    /// Check that all exposed functions exist in implementation
+    /// Check that all exposed entities exist in implementation
     fn check_exposes(
         &self,
         spec: &ModuleSpec,
         extracted: &ExtractedModule,
         result: &mut CheckResult,
     ) {
-        for (name, func_spec) in &spec.exposes {
-            if !extracted.public_functions.contains(name) {
-                if extracted.private_functions.contains(name) {
+        for (name, expose_spec) in &spec.exposes {
+            let is_type = expose_spec.kind.as_deref() == Some("type");
+
+            if is_type {
+                // Type entities are checked by check_type_constraints
+                // Here we just verify they exist
+                if !extracted.type_definitions.contains_key(name) {
                     result.error(format!(
-                        "Function '{}' is specified as exposed but is private/internal in implementation",
-                        name
-                    ));
-                } else {
-                    result.error(format!(
-                        "Function '{}' is specified as exposed but not found in implementation",
+                        "Type '{}' is specified as exposed but not found in implementation",
                         name
                     ));
                 }
             } else {
-                // Check signature if specified
-                if let Some(spec_sig) = &func_spec.signature {
-                    if let Some(impl_sig) = extracted.function_signatures.get(name) {
-                        // Normalize signatures for comparison (remove whitespace)
-                        let spec_normalized: String =
-                            spec_sig.chars().filter(|c| !c.is_whitespace()).collect();
-                        let impl_normalized: String =
-                            impl_sig.chars().filter(|c| !c.is_whitespace()).collect();
+                // Function entities
+                if !extracted.public_functions.contains(name) {
+                    if extracted.private_functions.contains(name) {
+                        result.error(format!(
+                            "Function '{}' is specified as exposed but is private/internal in implementation",
+                            name
+                        ));
+                    } else {
+                        result.error(format!(
+                            "Function '{}' is specified as exposed but not found in implementation",
+                            name
+                        ));
+                    }
+                } else {
+                    // Check signature if specified (legacy)
+                    if let Some(spec_sig) = &expose_spec.signature {
+                        if let Some(impl_sig) = extracted.function_signatures.get(name) {
+                            let spec_normalized: String =
+                                spec_sig.chars().filter(|c| !c.is_whitespace()).collect();
+                            let impl_normalized: String =
+                                impl_sig.chars().filter(|c| !c.is_whitespace()).collect();
 
-                        if spec_normalized != impl_normalized {
-                            result.warning(format!(
-                                "Function '{}' signature mismatch:\n  spec: {}\n  impl: {}",
-                                name, spec_sig, impl_sig
-                            ));
+                            if spec_normalized != impl_normalized {
+                                result.warning(format!(
+                                    "Function '{}' signature mismatch:\n  spec: {}\n  impl: {}",
+                                    name, spec_sig, impl_sig
+                                ));
+                            }
                         }
                     }
                 }
@@ -377,14 +485,14 @@ impl SpecChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spec::{FunctionSpec, Layer, Stability};
+    use crate::spec::{ExposeSpec, Layer, Stability};
     use std::collections::HashMap;
     use tempfile::TempDir;
 
     fn create_test_spec() -> ModuleSpec {
         let mut exposes = HashMap::new();
-        exposes.insert("deposit".to_string(), FunctionSpec::default());
-        exposes.insert("withdraw".to_string(), FunctionSpec::default());
+        exposes.insert("deposit".to_string(), ExposeSpec::default());
+        exposes.insert("withdraw".to_string(), ExposeSpec::default());
 
         ModuleSpec {
             module: "Bridge".to_string(),

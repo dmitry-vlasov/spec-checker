@@ -7,6 +7,8 @@ mod checker;
 mod extractors;
 mod rules;
 mod spec;
+mod type_formula;
+mod types;
 
 use checker::SpecChecker;
 use spec::{ModuleSpec, resolve_defaults};

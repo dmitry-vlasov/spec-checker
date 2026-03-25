@@ -6,8 +6,10 @@ module: rust
 source_path: src/extractors/rust.rs
 
 exposes:
-  # Note: signature check may show mismatch due to test code in string literals
-  new:
+  RustExtractor.new:
+    kind: function
+    type_constraints:
+      - "equals(return, Self)"
     ensures:
       - Creates RustExtractor instance
 
@@ -15,12 +17,16 @@ exposes:
 #   extract(&self, path: &PathBuf) -> Result<ExtractedModule>
 
 internal:
-  - format_fn_signature
-  - format_method_signature
-  - format_signature
-  - flatten_use_tree
-  - get_root_crate
-  - is_public
+  - RustVisitor.format_fn_signature
+  - RustVisitor.format_method_signature
+  - RustVisitor.format_signature
+  - RustVisitor.flatten_use_tree
+  - RustVisitor.get_root_crate
+  - RustVisitor.is_public
+  - RustVisitor.syn_type_to_repr
+  - RustVisitor.extract_generics
+  - RustVisitor.extract_derives
+  - RustVisitor.build_function_info
 
 # RustVisitor struct for AST traversal
 

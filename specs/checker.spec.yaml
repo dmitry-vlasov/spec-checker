@@ -7,26 +7,42 @@ source_path: src/checker.rs
 layer: application       # Orchestrates domain + infrastructure
 
 exposes:
-  new:
-    signature: "(source_root: PathBuf) -> Self"
+  SpecChecker.new:
+    kind: function
+    type_constraints:
+      - "equals(param(source_root), PathBuf)"
+      - "equals(return, Self)"
     ensures:
       - Creates checker with default built-in rules
 
-  with_specs:
-    signature: "(self, specs: &[ModuleSpec]) -> Self"
+  SpecChecker.with_specs:
+    kind: function
+    type_constraints:
+      - "equals(param(0), Self)"               # takes self by value
+      - "equals(param(specs), &[ModuleSpec])"
+      - "equals(return, Self)"
     ensures:
       - Builds spec map for cross-module checking
       - Enables layer/context/stability validation
 
-  with_rules_config:
-    signature: "(self, config: &RulesConfig) -> Self"
+  SpecChecker.with_rules_config:
+    kind: function
+    type_constraints:
+      - "equals(param(0), Self)"               # takes self by value
+      - "equals(param(config), &RulesConfig)"
+      - "equals(return, Self)"
     ensures:
       - Removes disabled built-in rules
       - Adds custom rules from config
       - Applies custom layer config if provided
 
-  check:
-    signature: "(&self, spec: &ModuleSpec) -> Result<CheckResult>"
+  SpecChecker.check:
+    kind: function
+    type_constraints:
+      - "equals(param(0), &Self)"              # takes &self
+      - "equals(param(spec), &ModuleSpec)"
+      - "fallible(return)"
+      - "equals(con(return), Result)"
     requires:
       - spec has valid module name
     ensures:
@@ -37,15 +53,35 @@ exposes:
       - Returns warnings for unlisted dependencies
       - Returns warnings for undocumented events
 
+  CheckResult:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "has_field(Self, errors)"
+      - "has_field(Self, warnings)"
+
+  SpecChecker:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "has_field(Self, source_root)"
+      - "has_field(Self, rules)"
+
+  CheckResult.error:
+    kind: function
+  CheckResult.warning:
+    kind: function
+
 internal:
-  - check_exposes
-  - check_internal
-  - check_dependencies
-  - check_forbidden_deps
-  - check_architectural_constraints
-  - check_events
-  - find_source_file
-  - extract_module_name
+  - SpecChecker.check_exposes
+  - SpecChecker.check_internal
+  - SpecChecker.check_dependencies
+  - SpecChecker.check_forbidden_deps
+  - SpecChecker.check_architectural_constraints
+  - SpecChecker.check_events
+  - SpecChecker.check_type_constraints
+  - SpecChecker.find_source_file
+  - SpecChecker.extract_module_name
 
 depends_on:
   - src/extractors/mod.rs

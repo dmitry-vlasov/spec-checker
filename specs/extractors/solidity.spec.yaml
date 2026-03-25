@@ -6,8 +6,10 @@ module: solidity
 source_path: src/extractors/solidity.rs
 
 exposes:
-  new:
-    signature: "() -> Self"
+  SolidityExtractor.new:
+    kind: function
+    type_constraints:
+      - "equals(return, Self)"
     ensures:
       - Creates SolidityExtractor instance
 

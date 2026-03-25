@@ -5,6 +5,8 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::types::{FunctionInfo, TypeInfo};
+
 pub use rust::RustExtractor;
 pub use solidity::SolidityExtractor;
 
@@ -40,6 +42,12 @@ pub struct ExtractedModule {
 
     /// Modifiers (Solidity) or attributes (Rust)
     pub modifiers: Vec<String>,
+
+    /// Rich type definitions (structs, enums, traits)
+    pub type_definitions: HashMap<String, TypeInfo>,
+
+    /// Structured function info (name -> params, return type, generics)
+    pub function_info: HashMap<String, FunctionInfo>,
 }
 
 /// Trait for language-specific extractors

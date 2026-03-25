@@ -7,8 +7,11 @@ source_path: src/spec.rs
 layer: domain
 
 exposes:
-  from_extracted:
-    signature: "(extracted: &ExtractedModule) -> Self"
+  ModuleSpec.from_extracted:
+    kind: function
+    type_constraints:
+      - "equals(param(extracted), &ExtractedModule)"
+      - "equals(return, Self)"
     ensures:
       - Creates ModuleSpec from extracted implementation
       - Populates exposes from public_functions
@@ -16,7 +19,11 @@ exposes:
       - Populates emits from events
 
   resolve_defaults:
-    signature: "(spec_dir: &Path, root_dir: &Path) -> SpecDefaults"
+    kind: function
+    type_constraints:
+      - "equals(param(spec_dir), &Path)"
+      - "equals(param(root_dir), &Path)"
+      - "equals(return, SpecDefaults)"
     ensures:
       - Walks directory chain from root_dir to spec_dir
       - Loads _defaults.yaml at each level
