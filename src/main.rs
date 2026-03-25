@@ -424,6 +424,7 @@ fn detect_language(path: &PathBuf) -> Option<String> {
         .map(|ext| match ext {
             "sol" => "solidity",
             "rs" => "rust",
+            "flow" => "flow9",
             "ts" | "tsx" => "typescript",
             "js" | "jsx" => "javascript",
             _ => ext,

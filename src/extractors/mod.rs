@@ -1,3 +1,4 @@
+mod flow9;
 mod rust;
 mod solidity;
 
@@ -7,6 +8,7 @@ use std::path::PathBuf;
 
 use crate::types::{FunctionInfo, TypeInfo};
 
+pub use flow9::Flow9Extractor;
 pub use rust::RustExtractor;
 pub use solidity::SolidityExtractor;
 
@@ -60,8 +62,9 @@ pub fn get_extractor(language: &str) -> Result<Box<dyn Extractor>> {
     match language.to_lowercase().as_str() {
         "solidity" | "sol" => Ok(Box::new(SolidityExtractor::new())),
         "rust" | "rs" => Ok(Box::new(RustExtractor::new())),
+        "flow9" | "flow" => Ok(Box::new(Flow9Extractor::new())),
         lang => Err(anyhow::anyhow!(
-            "Unsupported language: {}. Supported: solidity, rust",
+            "Unsupported language: {}. Supported: solidity, rust, flow9",
             lang
         )),
     }

@@ -251,8 +251,9 @@ Results are cached in `.spec-cache/` keyed by `sha256(code + invariant)`. Unchan
 
 | Language | Extractor | Status |
 |----------|-----------|--------|
-| Solidity | solc AST + regex fallback | Working |
 | Rust | syn AST (full type extraction) | Working |
+| Solidity | solc AST + regex fallback | Working |
+| Flow9 | Regex (exports, structs, unions, functions) | Working |
 | TypeScript | - | Planned |
 
 ## Installation
