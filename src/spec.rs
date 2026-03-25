@@ -119,76 +119,76 @@ pub struct ModuleSpec {
     /// Module name
     pub module: String,
 
-    /// Programming language (solidity, rust, typescript)
-    #[serde(default)]
+    /// Programming language
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 
     /// Path to source file(s) relative to source root
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
 
-    /// Publicly exposed functions with their contracts
-    #[serde(default)]
+    /// Publicly exposed entities (functions and types) with their contracts
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub exposes: HashMap<String, ExposeSpec>,
 
     /// Allowed module dependencies
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends_on: Vec<String>,
 
     /// Forbidden dependencies
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub forbidden_deps: Vec<String>,
 
     /// External package dependencies
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub external_deps: Vec<String>,
 
     /// Forbidden external packages
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub forbidden_external: Vec<String>,
 
     /// Architectural layer (vertical stratification)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layer: Option<Layer>,
 
     /// Bounded context (horizontal segmentation)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
 
     /// Stability level (change frequency)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stability: Option<Stability>,
 
     /// Module-level invariants
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub invariants: Vec<String>,
 
     /// Events this module emits
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub emits: Vec<String>,
 
     /// Events this module subscribes to
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subscribes: Vec<String>,
 
     /// State variables owned by this module
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub owns_state: Vec<String>,
 
     /// External state this module reads
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reads_state: Vec<String>,
 
     /// External state this module modifies
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modifies: Vec<String>,
 
     /// Who can call this module
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub callable_by: Vec<String>,
 
     /// Role-based access control
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<String>,
 
 }
@@ -196,41 +196,40 @@ pub struct ModuleSpec {
 /// Specification for an exposed entity (function, type, trait, etc.)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExposeSpec {
-    /// Entity kind: "function", "struct", "enum", "trait", "type"
-    /// If omitted, defaults to "function" for backwards compatibility.
-    #[serde(default)]
+    /// Entity kind: "function", "type"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
 
     /// Function signature (legacy, for backward compatibility)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
 
     /// Preconditions (requires) — functions
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<String>,
 
     /// Postconditions (ensures) — functions and types
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ensures: Vec<String>,
 
     /// Modifies clause (state changes) — functions
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modifies: Vec<String>,
 
     /// Events emitted — functions
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub emits: Vec<String>,
 
     /// Allowed callers — functions
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub callable_by: Vec<String>,
 
     /// Function visibility (public, external, internal, private)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visibility: Option<String>,
 
     /// Type formula constraints
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub type_constraints: Vec<String>,
 }
 
@@ -401,13 +400,61 @@ impl ModuleSpec {
     pub fn from_extracted(extracted: &ExtractedModule) -> Self {
         let mut exposes = HashMap::new();
 
-        for func in &extracted.public_functions {
-            let func_spec = ExposeSpec {
-                signature: extracted.function_signatures.get(func).cloned(),
-                visibility: Some("public".to_string()),
+        // Add type definitions
+        for (name, type_info) in &extracted.type_definitions {
+            // Only include types that are publicly referenced
+            if !extracted.public_functions.contains(name) {
+                continue;
+            }
+            let mut constraints = Vec::new();
+            match type_info.kind {
+                crate::types::TypeKind::Struct => constraints.push("is_product(Self)".to_string()),
+                crate::types::TypeKind::Enum => constraints.push("is_sum(Self)".to_string()),
+                _ => {}
+            }
+            for field in &type_info.fields {
+                constraints.push(format!("has_field(Self, {})", field.name));
+            }
+            for variant in &type_info.variants {
+                constraints.push(format!("has_variant(Self, {})", variant.name));
+            }
+            exposes.insert(name.clone(), ExposeSpec {
+                kind: Some("type".to_string()),
+                type_constraints: constraints,
                 ..Default::default()
-            };
-            exposes.insert(func.clone(), func_spec);
+            });
+        }
+
+        // Add public functions
+        for func in &extracted.public_functions {
+            // Skip if already added as a type
+            if exposes.contains_key(func) {
+                continue;
+            }
+
+            let mut constraints = Vec::new();
+
+            // Convert function info to type constraints
+            if let Some(fi) = extracted.function_info.get(func) {
+                for param in &fi.params {
+                    if let Some(name) = &param.name {
+                        let type_str = param.type_repr.to_string();
+                        constraints.push(format!("equals(param({}), {})", name, type_str));
+                    }
+                }
+                if let Some(ret) = &fi.return_type {
+                    let ret_str = ret.to_string();
+                    if ret_str != "()" {
+                        constraints.push(format!("equals(return, {})", ret_str));
+                    }
+                }
+            }
+
+            exposes.insert(func.clone(), ExposeSpec {
+                kind: Some("function".to_string()),
+                type_constraints: constraints,
+                ..Default::default()
+            });
         }
 
         Self {
