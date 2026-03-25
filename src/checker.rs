@@ -173,11 +173,18 @@ impl SpecChecker {
         result: &mut CheckResult,
     ) {
         for (name, expose_spec) in &spec.exposes {
-            if expose_spec.type_constraints.is_empty() && expose_spec.kind.is_none() {
+            if expose_spec.type_constraints.is_empty() {
                 continue;
             }
 
-            let is_type = expose_spec.kind.as_deref() == Some("type");
+            let kind = expose_spec.kind.as_deref();
+
+            // Variables don't have type info yet — skip type constraint checking
+            if kind == Some("variable") {
+                continue;
+            }
+
+            let is_type = kind == Some("type");
 
             if is_type {
                 // Type entity — look up in type_definitions
@@ -293,14 +300,22 @@ impl SpecChecker {
         result: &mut CheckResult,
     ) {
         for (name, expose_spec) in &spec.exposes {
-            let is_type = expose_spec.kind.as_deref() == Some("type");
+            let kind = expose_spec.kind.as_deref();
 
-            if is_type {
+            if kind == Some("type") {
                 // Type entities are checked by check_type_constraints
                 // Here we just verify they exist
                 if !extracted.type_definitions.contains_key(name) {
                     result.error(format!(
                         "Type '{}' is specified as exposed but not found in implementation",
+                        name
+                    ));
+                }
+            } else if kind == Some("variable") {
+                // Global variables — check in state_variables
+                if !extracted.state_variables.contains(name) {
+                    result.error(format!(
+                        "Variable '{}' is specified as exposed but not found in implementation",
                         name
                     ));
                 }

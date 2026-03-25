@@ -364,6 +364,18 @@ impl<'ast> Visit<'ast> for RustVisitor {
                     }
                 }
             }
+            Item::Const(item_const) => {
+                let name = item_const.ident.to_string();
+                if !self.module.state_variables.contains(&name) {
+                    self.module.state_variables.push(name);
+                }
+            }
+            Item::Static(item_static) => {
+                let name = item_static.ident.to_string();
+                if !self.module.state_variables.contains(&name) {
+                    self.module.state_variables.push(name);
+                }
+            }
             _ => {
                 // Visit children for other item types
                 syn::visit::visit_item(self, item);

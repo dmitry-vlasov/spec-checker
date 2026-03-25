@@ -457,6 +457,17 @@ impl ModuleSpec {
             });
         }
 
+        // Add global variables
+        for var in &extracted.state_variables {
+            if exposes.contains_key(var) {
+                continue;
+            }
+            exposes.insert(var.clone(), ExposeSpec {
+                kind: Some("variable".to_string()),
+                ..Default::default()
+            });
+        }
+
         Self {
             module: extracted.name.clone(),
             language: Some(extracted.language.clone()),

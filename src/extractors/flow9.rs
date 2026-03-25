@@ -234,6 +234,37 @@ fn parse_flow9(raw_content: &str, path: &PathBuf) -> Result<ExtractedModule> {
         }
     }
 
+    // Extract global variable definitions from export block
+    // In flow9, exported variables are: name = expr; inside the export { ... } block
+    {
+        let var_re = regex::Regex::new(r"(?m)^\s*([a-z]\w*)\s*=[^=]").unwrap();
+        for cap in var_re.captures_iter(content) {
+            let name = cap[1].to_string();
+
+            if name == "if" || name == "export" || name == "import" || name == "native" {
+                continue;
+            }
+            // Only include if it's in the export block
+            if !exported_names.contains(&name) {
+                continue;
+            }
+            // Skip if already known as a function, type, or struct field
+            if module.function_signatures.contains_key(&name)
+                || module.function_info.contains_key(&name)
+                || module.type_definitions.contains_key(&name)
+                || module.type_definitions.values().any(|ti| {
+                    ti.fields.iter().any(|f| f.name == name)
+                        || ti.variants.iter().any(|v| v.name == name)
+                })
+            {
+                continue;
+            }
+            if !module.state_variables.contains(&name) {
+                module.state_variables.push(name);
+            }
+        }
+    }
+
     Ok(module)
 }
 
