@@ -10,6 +10,7 @@ exposes:
     kind: type
     type_constraints:
       - "is_product(Self)"
+      - "is_subtype(Self, Extractor)"
 
   SolidityExtractor.new:
     kind: function

@@ -6,6 +6,12 @@ module: extractors
 source_path: src/extractors/mod.rs
 
 exposes:
+  Extractor:
+    kind: type
+    ensures:
+      - Trait for language-specific extractors
+      - Single method extract() returning Result<ExtractedModule>
+
   ExtractedModule:
     kind: type
     type_constraints:

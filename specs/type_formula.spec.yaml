@@ -33,7 +33,7 @@ exposes:
       - "cloneable"
       - "has_variant(Self, Equals)"
       - "has_variant(Self, Matches)"
-      - "has_variant(Self, Implements)"
+      - "has_variant(Self, IsSubtype)"
       - "has_variant(Self, HasField)"
       - "has_variant(Self, HasVariant)"
       - "has_variant(Self, Fallible)"
@@ -67,7 +67,7 @@ exposes:
       - "has_field(Self, message)"
       - "has_field(Self, position)"
     ensures:
-      - Implements Display
+      - IsSubtype Display
 
   EvalError:
     kind: type
@@ -76,7 +76,7 @@ exposes:
       - "cloneable"
       - "has_field(Self, message)"
     ensures:
-      - Implements Display
+      - IsSubtype Display
 
   parse_formula:
     kind: function

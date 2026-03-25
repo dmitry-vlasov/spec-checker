@@ -48,7 +48,7 @@ pub enum TypeExpr {
 pub enum Predicate {
     Equals(TypeExpr, TypeExpr),
     Matches(TypeExpr, String),
-    Implements(TypeExpr, String),
+    IsSubtype(TypeExpr, String),
     IsSum(TypeExpr),
     IsProduct(TypeExpr),
     IsFunction(TypeExpr),
@@ -542,14 +542,14 @@ impl<'a> FormulaParser<'a> {
                 self.expect(&Token::RParen)?;
                 Ok(Formula::Pred(Predicate::Matches(t, pattern)))
             }
-            "implements" => {
+            "is_subtype" => {
                 self.advance();
                 self.expect(&Token::LParen)?;
                 let t = self.parse_type_expr()?;
                 self.expect(&Token::Comma)?;
                 let trait_name = self.expect_ident()?;
                 self.expect(&Token::RParen)?;
-                Ok(Formula::Pred(Predicate::Implements(t, trait_name)))
+                Ok(Formula::Pred(Predicate::IsSubtype(t, trait_name)))
             }
             "has_field" => {
                 self.advance();
@@ -1145,7 +1145,7 @@ fn evaluate_predicate(
             })?;
             Ok(re.is_match(&repr_str))
         }
-        Predicate::Implements(t, trait_name) => {
+        Predicate::IsSubtype(t, trait_name) => {
             let repr = evaluate_type_expr(t, ctx)?;
             let type_name = match &repr {
                 TypeRepr::Named(n) => n,
