@@ -14,10 +14,15 @@ mod types;
 use checker::SpecChecker;
 use spec::{ModuleSpec, resolve_defaults};
 
+const VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (", env!("GIT_HASH"), ")"
+);
+
 #[derive(Parser)]
 #[command(name = "spec-checker")]
 #[command(about = "Structural and behavioral specification checker")]
-#[command(version)]
+#[command(version = VERSION)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -52,16 +57,16 @@ enum Commands {
         llm_model: String,
     },
 
-    /// Generate spec skeleton from existing code
+    /// Generate spec skeleton from existing code (file or directory)
     Init {
-        /// Source file to analyze
+        /// Source file or directory to analyze
         source: PathBuf,
 
-        /// Language (solidity, rust, typescript)
+        /// Language (solidity, rust, flow9, typescript)
         #[arg(short, long)]
         language: Option<String>,
 
-        /// Output spec file path
+        /// Output spec file or directory path
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
@@ -295,6 +300,10 @@ fn cmd_check(
 }
 
 fn cmd_init(source: &PathBuf, language: Option<&str>, output: Option<&PathBuf>) -> Result<()> {
+    if source.is_dir() {
+        return cmd_init_dir(source, language, output);
+    }
+
     let lang = language
         .map(String::from)
         .or_else(|| detect_language(source))
@@ -315,6 +324,92 @@ fn cmd_init(source: &PathBuf, language: Option<&str>, output: Option<&PathBuf>) 
         println!();
         println!("{}", yaml);
     }
+
+    Ok(())
+}
+
+fn cmd_init_dir(
+    source_dir: &PathBuf,
+    language: Option<&str>,
+    output: Option<&PathBuf>,
+) -> Result<()> {
+    // Determine file extension to scan for
+    let extensions: Vec<&str> = match language {
+        Some("flow9") | Some("flow") => vec!["flow"],
+        Some("rust") | Some("rs") => vec!["rs"],
+        Some("solidity") | Some("sol") => vec!["sol"],
+        Some(lang) => anyhow::bail!("Unsupported language: {}", lang),
+        None => vec!["flow", "rs", "sol"],
+    };
+
+    // Determine output directory
+    let out_dir = output.cloned().unwrap_or_else(|| PathBuf::from("./specs"));
+    std::fs::create_dir_all(&out_dir)?;
+
+    let mut count = 0;
+
+    for ext in &extensions {
+        let pattern = format!("{}/**/*.{}", source_dir.display(), ext);
+        for entry in glob::glob(&pattern)? {
+            let entry = entry?;
+
+            let lang = detect_language(&entry)
+                .or_else(|| language.map(String::from))
+                .unwrap_or_default();
+
+            if lang.is_empty() {
+                continue;
+            }
+
+            let extractor = match extractors::get_extractor(&lang) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            let extracted = match extractor.extract(&entry) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!(
+                        "  {} {} — {}",
+                        "⚠".yellow(),
+                        entry.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
+
+            // Skip files with nothing to spec
+            if extracted.public_functions.is_empty() && extracted.type_definitions.is_empty() {
+                continue;
+            }
+
+            let spec = ModuleSpec::from_extracted(&extracted);
+            let yaml = serde_yaml::to_string(&spec)?;
+
+            // Build output path: mirror directory structure
+            let relative = entry
+                .strip_prefix(source_dir)
+                .unwrap_or(&entry);
+            let spec_name = relative.with_extension("spec.yaml");
+            let spec_path = out_dir.join(&spec_name);
+
+            if let Some(parent) = spec_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+
+            std::fs::write(&spec_path, &yaml)?;
+            println!("  {} {}", "✓".green(), spec_path.display());
+            count += 1;
+        }
+    }
+
+    println!(
+        "\n{} Generated {} spec file(s) in {}",
+        "Done:".green().bold(),
+        count,
+        out_dir.display()
+    );
 
     Ok(())
 }
