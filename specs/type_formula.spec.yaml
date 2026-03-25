@@ -81,7 +81,7 @@ exposes:
   parse_formula:
     kind: function
     type_constraints:
-      - "equals(param(input), &str)"
+      - "equals(param(input), str)"
       - "fallible(return)"
     ensures:
       - Parses formula string into Formula AST
@@ -91,7 +91,7 @@ exposes:
   evaluate_formula:
     kind: function
     type_constraints:
-      - "equals(param(formula), &Formula)"
+      - "equals(param(formula), Formula)"
       - "fallible(return)"
     ensures:
       - Short-circuits AND on first false
@@ -101,7 +101,7 @@ exposes:
   parse_type_repr_from_str:
     kind: function
     type_constraints:
-      - "equals(param(s), &str)"
+      - "equals(param(s), str)"
       - "fallible(return)"
     ensures:
       - Handles references, slices, arrays, tuples, fn pointers, generics

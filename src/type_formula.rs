@@ -1127,7 +1127,8 @@ fn evaluate_predicate(
         Predicate::Equals(a, b) => {
             let repr_a = evaluate_type_expr(a, ctx)?;
             let repr_b = evaluate_type_expr(b, ctx)?;
-            Ok(repr_a == repr_b)
+            // Strip references for language-agnostic comparison
+            Ok(strip_references(&repr_a) == strip_references(&repr_b))
         }
         Predicate::Matches(t, pattern) => {
             let repr = evaluate_type_expr(t, ctx)?;
@@ -1243,6 +1244,15 @@ fn evaluate_predicate(
             // For now, always return true (optimistic) with a note
             Ok(true)
         }
+    }
+}
+
+/// Strip language-specific wrappers (references, slices) to get the base type.
+/// This makes type comparison language-agnostic: `&mut Self` == `Self`, `&[Rule]` == `[Rule]`.
+fn strip_references(repr: &TypeRepr) -> &TypeRepr {
+    match repr {
+        TypeRepr::Reference { inner, .. } => strip_references(inner),
+        _ => repr,
     }
 }
 
@@ -1706,6 +1716,11 @@ mod tests {
         let type_defs = HashMap::from([("Checker".into(), ti.clone())]);
         let ctx = make_test_context(Some(&ti), Some(&fi), &type_defs);
 
+        // equals strips references: param(spec) is &ModuleSpec, matches ModuleSpec
+        let f = parse_formula("equals(param(spec), ModuleSpec)").unwrap();
+        assert!(evaluate_formula(&f, &ctx).unwrap());
+
+        // Also still works with explicit reference
         let f = parse_formula("equals(param(spec), &ModuleSpec)").unwrap();
         assert!(evaluate_formula(&f, &ctx).unwrap());
     }

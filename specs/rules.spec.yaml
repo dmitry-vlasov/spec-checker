@@ -66,10 +66,10 @@ exposes:
   check_dependency:
     kind: function
     type_constraints:
-      - "equals(param(source), &ModuleSpec)"
-      - "equals(param(target), &ModuleSpec)"
-      - "equals(param(rules), &[Rule])"
-      - "equals(param(layer_config), &LayerConfig)"
+      - "equals(param(source), ModuleSpec)"
+      - "equals(param(target), ModuleSpec)"
+      - "equals(param(rules), [Rule])"
+      - "equals(param(layer_config), LayerConfig)"
       - "equals(con(return), Vec)"
     ensures:
       - Evaluates each rule's 'when' condition
@@ -79,8 +79,8 @@ exposes:
   evaluate:
     kind: function
     type_constraints:
-      - "equals(param(expr), &str)"
-      - "equals(param(ctx), &EvalContext)"
+      - "equals(param(expr), str)"
+      - "equals(param(ctx), EvalContext)"
       - "fallible(return)"
     ensures:
       - Evaluates boolean expressions

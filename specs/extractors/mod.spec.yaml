@@ -24,7 +24,7 @@ exposes:
   get_extractor:
     kind: function
     type_constraints:
-      - "equals(param(language), &str)"
+      - "equals(param(language), str)"
       - "fallible(return)"
     requires:
       - language is "solidity", "rust", or alias

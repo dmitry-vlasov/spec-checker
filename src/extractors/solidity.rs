@@ -131,12 +131,14 @@ fn parse_solidity_ast(ast_output: &str, path: &PathBuf) -> Result<ExtractedModul
 
     let json_str = &ast_output[json_start.unwrap()..];
 
-    // Try to parse as SolcAstOutput first (multiple files format)
+    // Try to parse as SolcAstOutput first (multiple files format with "sources" key)
     if let Ok(output) = serde_json::from_str::<SolcAstOutput>(json_str) {
-        return extract_from_solc_output(&output, path);
+        if !output.sources.is_empty() {
+            return extract_from_solc_output(&output, path);
+        }
     }
 
-    // Try to parse as single AstNode (single file format)
+    // Try to parse as single AstNode (single file format from --ast-compact-json)
     if let Ok(ast) = serde_json::from_str::<AstNode>(json_str) {
         return extract_from_ast_node(&ast, path);
     }

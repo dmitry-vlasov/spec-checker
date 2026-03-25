@@ -69,7 +69,7 @@ exposes:
   ModuleSpec.from_extracted:
     kind: function
     type_constraints:
-      - "equals(param(extracted), &ExtractedModule)"
+      - "equals(param(extracted), ExtractedModule)"
       - "equals(return, Self)"
     ensures:
       - Creates ModuleSpec from extracted implementation
@@ -83,7 +83,7 @@ exposes:
   SpecDefaults.merge:
     kind: function
     type_constraints:
-      - "equals(param(0), &Self)"
+      - "equals(param(0), Self)"
       - "equals(return, SpecDefaults)"
     ensures:
       - "Scalars: child wins if set"
@@ -92,7 +92,7 @@ exposes:
   Layer.new:
     kind: function
     type_constraints:
-      - "equals(param(name), &str)"
+      - "equals(param(name), str)"
       - "equals(return, Self)"
     ensures:
       - Lowercases the input name
@@ -107,13 +107,13 @@ exposes:
   LayerConfig.can_depend_on:
     kind: function
     type_constraints:
-      - "equals(param(0), &Self)"
+      - "equals(param(0), Self)"
       - "equals(return, bool)"
 
   Stability.can_depend_on:
     kind: function
     type_constraints:
-      - "equals(param(0), &Self)"
+      - "equals(param(0), Self)"
       - "equals(return, bool)"
     ensures:
       - Stable can only depend on Stable
@@ -123,8 +123,8 @@ exposes:
   resolve_defaults:
     kind: function
     type_constraints:
-      - "equals(param(spec_dir), &Path)"
-      - "equals(param(root_dir), &Path)"
+      - "equals(param(spec_dir), Path)"
+      - "equals(param(root_dir), Path)"
       - "equals(return, SpecDefaults)"
     ensures:
       - Walks directory chain from root_dir to spec_dir

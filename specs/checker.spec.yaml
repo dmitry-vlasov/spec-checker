@@ -28,12 +28,12 @@ exposes:
   CheckResult.error:
     kind: function
     type_constraints:
-      - "equals(param(0), &mut Self)"
+      - "equals(param(0), Self)"
 
   CheckResult.warning:
     kind: function
     type_constraints:
-      - "equals(param(0), &mut Self)"
+      - "equals(param(0), Self)"
 
   SpecChecker.new:
     kind: function
@@ -64,8 +64,8 @@ exposes:
   SpecChecker.check:
     kind: function
     type_constraints:
-      - "equals(param(0), &Self)"
-      - "equals(param(spec), &ModuleSpec)"
+      - "equals(param(0), Self)"
+      - "equals(param(spec), ModuleSpec)"
       - "fallible(return)"
       - "equals(con(return), Result)"
     requires:
