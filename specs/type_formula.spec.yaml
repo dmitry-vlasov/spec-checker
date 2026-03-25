@@ -1,0 +1,140 @@
+# Spec Checker - Type formula DSL module (parser + evaluator)
+# Inherits: language=rust, context=core, stability=stable (root)
+
+module: type_formula
+source_path: src/type_formula.rs
+
+layer: domain
+
+exposes:
+  TypeExpr:
+    kind: type
+    type_constraints:
+      - "is_sum(Self)"
+      - "cloneable"
+      - "has_variant(Self, Self_)"
+      - "has_variant(Self, Literal)"
+      - "has_variant(Self, Field)"
+      - "has_variant(Self, Param)"
+      - "has_variant(Self, Return)"
+      - "has_variant(Self, Con)"
+      - "has_variant(Self, Arg)"
+      - "has_variant(Self, Apply)"
+      - "has_variant(Self, Function)"
+      - "has_variant(Self, Domain)"
+      - "has_variant(Self, Codomain)"
+      - "has_variant(Self, Sum)"
+      - "has_variant(Self, Product)"
+
+  Predicate:
+    kind: type
+    type_constraints:
+      - "is_sum(Self)"
+      - "cloneable"
+      - "has_variant(Self, Equals)"
+      - "has_variant(Self, Matches)"
+      - "has_variant(Self, Implements)"
+      - "has_variant(Self, HasField)"
+      - "has_variant(Self, HasVariant)"
+      - "has_variant(Self, Fallible)"
+      - "has_variant(Self, Cloneable)"
+      - "has_variant(Self, Serializable)"
+
+  Formula:
+    kind: type
+    type_constraints:
+      - "is_sum(Self)"
+      - "cloneable"
+      - "has_variant(Self, Pred)"
+      - "has_variant(Self, And)"
+      - "has_variant(Self, Or)"
+      - "has_variant(Self, Not)"
+      - "has_variant(Self, Implies)"
+
+  ParamRef:
+    kind: type
+    type_constraints:
+      - "is_sum(Self)"
+      - "cloneable"
+      - "has_variant(Self, Index)"
+      - "has_variant(Self, Name)"
+
+  ParseError:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "cloneable"
+      - "has_field(Self, message)"
+      - "has_field(Self, position)"
+    ensures:
+      - Implements Display
+
+  EvalError:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "cloneable"
+      - "has_field(Self, message)"
+    ensures:
+      - Implements Display
+
+  parse_formula:
+    kind: function
+    type_constraints:
+      - "equals(param(input), &str)"
+      - "fallible(return)"
+    ensures:
+      - Parses formula string into Formula AST
+      - Returns ParseError with position on malformed input
+      - Rejects trailing unparsed tokens
+
+  evaluate_formula:
+    kind: function
+    type_constraints:
+      - "equals(param(formula), &Formula)"
+      - "fallible(return)"
+    ensures:
+      - Short-circuits AND on first false
+      - Short-circuits OR on first true
+      - Implies returns true when premise is false
+
+  parse_type_repr_from_str:
+    kind: function
+    type_constraints:
+      - "equals(param(s), &str)"
+      - "fallible(return)"
+    ensures:
+      - Handles references, slices, arrays, tuples, fn pointers, generics
+      - Returns Unit for "()"
+      - Returns Infer for "_"
+
+internal:
+  - tokenize
+  - parse_type_literal_from
+  - parse_ref_type_literal
+  - parse_bracket_type_literal
+  - find_angle_bracket
+  - find_matching_paren
+  - split_type_args
+  - evaluate_type_expr
+  - evaluate_predicate
+  - extract_type_name
+  - check_trait_or_derive
+
+depends_on:
+  - src/types.rs
+
+external_deps:
+  - regex         # for matches() predicate pattern matching
+
+forbidden_deps:
+  - syn           # formula parser is hand-written, not syn-based
+  - serde         # formulas are not serialized
+  - anyhow        # uses custom ParseError/EvalError
+
+invariants:
+  - "Parser is recursive descent with proper nesting"
+  - "Type literal tokenization respects balanced <> () [] brackets"
+  - "Unary predicates without arguments default to Self"
+  - "Self evaluates to Named('Self') when no type context is available"
+  - "NoUnsafe is optimistic (returns true) until body analysis is implemented"

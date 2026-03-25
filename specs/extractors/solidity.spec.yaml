@@ -6,6 +6,11 @@ module: solidity
 source_path: src/extractors/solidity.rs
 
 exposes:
+  SolidityExtractor:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+
   SolidityExtractor.new:
     kind: function
     type_constraints:
@@ -13,7 +18,7 @@ exposes:
     ensures:
       - Creates SolidityExtractor instance
 
-# Implements Extractor trait (via impl block, not pub fn):
+# Implements Extractor trait (via impl block):
 #   extract(&self, path: &PathBuf) -> Result<ExtractedModule>
 
 internal:
@@ -40,4 +45,3 @@ invariants:
   - "Uses solc AST when available, regex as fallback"
   - "Extracts: functions, events, imports, state variables, modifiers"
   - "Identifies visibility: public, external, internal, private"
-  - "Extracts return types from function signatures"

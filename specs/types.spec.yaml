@@ -1,0 +1,116 @@
+# Spec Checker - Type representation module
+# Inherits: language=rust, context=core, stability=stable (root)
+
+module: types
+source_path: src/types.rs
+
+layer: domain
+
+exposes:
+  TypeRepr:
+    kind: type
+    type_constraints:
+      - "is_sum(Self)"
+      - "cloneable"
+      - "has_variant(Self, Named)"
+      - "has_variant(Self, Applied)"
+      - "has_variant(Self, Tuple)"
+      - "has_variant(Self, Reference)"
+      - "has_variant(Self, Slice)"
+      - "has_variant(Self, Array)"
+      - "has_variant(Self, FnPointer)"
+      - "has_variant(Self, Unit)"
+      - "has_variant(Self, Infer)"
+    ensures:
+      - Implements Display for human-readable output
+      - Implements PartialEq for structural equality
+
+  TypeKind:
+    kind: type
+    type_constraints:
+      - "is_sum(Self)"
+      - "cloneable"
+      - "has_variant(Self, Struct)"
+      - "has_variant(Self, Enum)"
+      - "has_variant(Self, Trait)"
+      - "has_variant(Self, TypeAlias)"
+    ensures:
+      - Implements Display
+
+  TypeInfo:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "cloneable"
+      - "has_field(Self, name)"
+      - "has_field(Self, kind)"
+      - "has_field(Self, fields)"
+      - "has_field(Self, variants)"
+      - "has_field(Self, trait_impls)"
+      - "has_field(Self, derives)"
+      - "has_field(Self, generics)"
+
+  FieldInfo:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "cloneable"
+      - "has_field(Self, name)"
+      - "has_field(Self, type_repr)"
+      - "has_field(Self, visibility)"
+
+  VariantInfo:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "cloneable"
+      - "has_field(Self, name)"
+      - "has_field(Self, fields)"
+
+  FunctionInfo:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "cloneable"
+      - "has_field(Self, name)"
+      - "has_field(Self, params)"
+      - "has_field(Self, return_type)"
+
+  ParamInfo:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "cloneable"
+      - "has_field(Self, name)"
+      - "has_field(Self, type_repr)"
+      - "has_field(Self, is_receiver)"
+
+  Visibility:
+    kind: type
+    type_constraints:
+      - "is_sum(Self)"
+      - "cloneable"
+      - "has_variant(Self, Public)"
+      - "has_variant(Self, Private)"
+
+  GenericParam:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "cloneable"
+      - "has_field(Self, name)"
+      - "has_field(Self, bounds)"
+
+depends_on: []
+
+external_deps: []
+
+forbidden_deps:
+  - syn           # types module is language-agnostic representation
+  - serde         # not serialized to YAML/JSON
+  - regex
+
+invariants:
+  - "TypeRepr is syntactic, not semantic (no type resolution)"
+  - "TypeRepr equality is structural"
+  - "Display output can be re-parsed by parse_type_repr_from_str"

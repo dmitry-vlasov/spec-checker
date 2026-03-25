@@ -7,6 +7,34 @@ source_path: src/checker.rs
 layer: application       # Orchestrates domain + infrastructure
 
 exposes:
+  CheckResult:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "has_field(Self, errors)"
+      - "has_field(Self, warnings)"
+      - "equals(con(field(errors)), Vec)"
+      - "equals(con(field(warnings)), Vec)"
+
+  SpecChecker:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "has_field(Self, source_root)"
+      - "has_field(Self, spec_map)"
+      - "has_field(Self, rules)"
+      - "has_field(Self, layer_config)"
+
+  CheckResult.error:
+    kind: function
+    type_constraints:
+      - "equals(param(0), &mut Self)"
+
+  CheckResult.warning:
+    kind: function
+    type_constraints:
+      - "equals(param(0), &mut Self)"
+
   SpecChecker.new:
     kind: function
     type_constraints:
@@ -18,18 +46,15 @@ exposes:
   SpecChecker.with_specs:
     kind: function
     type_constraints:
-      - "equals(param(0), Self)"               # takes self by value
-      - "equals(param(specs), &[ModuleSpec])"
+      - "equals(param(0), Self)"               # takes self by value (builder)
       - "equals(return, Self)"
     ensures:
       - Builds spec map for cross-module checking
-      - Enables layer/context/stability validation
 
   SpecChecker.with_rules_config:
     kind: function
     type_constraints:
-      - "equals(param(0), Self)"               # takes self by value
-      - "equals(param(config), &RulesConfig)"
+      - "equals(param(0), Self)"               # takes self by value (builder)
       - "equals(return, Self)"
     ensures:
       - Removes disabled built-in rules
@@ -39,7 +64,7 @@ exposes:
   SpecChecker.check:
     kind: function
     type_constraints:
-      - "equals(param(0), &Self)"              # takes &self
+      - "equals(param(0), &Self)"
       - "equals(param(spec), &ModuleSpec)"
       - "fallible(return)"
       - "equals(con(return), Result)"
@@ -51,26 +76,6 @@ exposes:
       - Returns errors for forbidden dependencies
       - Returns errors for architectural rule violations
       - Returns warnings for unlisted dependencies
-      - Returns warnings for undocumented events
-
-  CheckResult:
-    kind: type
-    type_constraints:
-      - "is_product(Self)"
-      - "has_field(Self, errors)"
-      - "has_field(Self, warnings)"
-
-  SpecChecker:
-    kind: type
-    type_constraints:
-      - "is_product(Self)"
-      - "has_field(Self, source_root)"
-      - "has_field(Self, rules)"
-
-  CheckResult.error:
-    kind: function
-  CheckResult.warning:
-    kind: function
 
 internal:
   - SpecChecker.check_exposes
@@ -80,6 +85,7 @@ internal:
   - SpecChecker.check_architectural_constraints
   - SpecChecker.check_events
   - SpecChecker.check_type_constraints
+  - SpecChecker.eval_constraints
   - SpecChecker.find_source_file
   - SpecChecker.extract_module_name
 
@@ -87,6 +93,7 @@ depends_on:
   - src/extractors/mod.rs
   - src/spec.rs
   - src/rules.rs
+  - src/type_formula.rs
 
 external_deps:
   - anyhow
@@ -96,7 +103,6 @@ forbidden_deps:
   - clap          # CLI concerns belong in main
   - colored       # output formatting belongs in main
   - syn           # AST parsing belongs in extractors
-  - regex         # pattern matching belongs in extractors
 
 invariants:
   - "Errors are always more severe than warnings"

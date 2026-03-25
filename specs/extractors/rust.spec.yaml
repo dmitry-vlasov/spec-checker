@@ -6,6 +6,11 @@ module: rust
 source_path: src/extractors/rust.rs
 
 exposes:
+  RustExtractor:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+
   RustExtractor.new:
     kind: function
     type_constraints:
@@ -13,7 +18,7 @@ exposes:
     ensures:
       - Creates RustExtractor instance
 
-# Implements Extractor trait (via impl block, not pub fn):
+# Implements Extractor trait (via impl block):
 #   extract(&self, path: &PathBuf) -> Result<ExtractedModule>
 
 internal:
@@ -28,8 +33,6 @@ internal:
   - RustVisitor.extract_derives
   - RustVisitor.build_function_info
 
-# RustVisitor struct for AST traversal
-
 depends_on: []
 
 external_deps:
@@ -43,8 +46,9 @@ forbidden_deps:
 
 invariants:
   - "Uses syn for proper AST parsing (not regex)"
-  - "Extracts: functions, structs, impl methods, use statements"
+  - "Extracts: functions, structs, enums, traits, impl methods, use statements"
+  - "Qualifies method names with parent type via dot delimiter (Type.method)"
   - "Flattens nested use trees: use a::{b::{c, d}} -> [a::b::c, a::b::d]"
   - "Filters test modules (#[cfg(test)])"
   - "Filters internal imports (crate::, super::)"
-  - "Extracts return types from function signatures"
+  - "Records trait implementations and derive macros per type"

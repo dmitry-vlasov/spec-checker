@@ -7,6 +7,53 @@ source_path: src/rules.rs
 layer: domain
 
 exposes:
+  Rule:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "serializable"
+      - "cloneable"
+      - "has_field(Self, name)"
+      - "has_field(Self, when)"
+      - "has_field(Self, require)"
+      - "has_field(Self, severity)"
+
+  Severity:
+    kind: type
+    type_constraints:
+      - "is_sum(Self)"
+      - "serializable"
+      - "cloneable"
+      - "has_variant(Self, Error)"
+      - "has_variant(Self, Warning)"
+
+  RulesConfig:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "serializable"
+      - "cloneable"
+      - "has_field(Self, rules)"
+      - "has_field(Self, disable_builtin)"
+      - "has_field(Self, layers)"
+
+  RuleViolation:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "has_field(Self, rule_name)"
+      - "has_field(Self, message)"
+      - "has_field(Self, severity)"
+
+  LayersInput:
+    kind: type
+    type_constraints:
+      - "is_sum(Self)"
+      - "serializable"
+      - "cloneable"
+      - "has_variant(Self, Linear)"
+      - "has_variant(Self, Dag)"
+
   builtin_rules:
     kind: function
     type_constraints:
@@ -24,8 +71,6 @@ exposes:
       - "equals(param(rules), &[Rule])"
       - "equals(param(layer_config), &LayerConfig)"
       - "equals(con(return), Vec)"
-    requires:
-      - rules is not empty
     ensures:
       - Evaluates each rule's 'when' condition
       - For matching rules, evaluates 'require' condition
@@ -37,15 +82,12 @@ exposes:
       - "equals(param(expr), &str)"
       - "equals(param(ctx), &EvalContext)"
       - "fallible(return)"
-    requires:
-      - expr is valid DSL expression
     ensures:
       - Evaluates boolean expressions
       - Supports AND, OR, NOT operators
       - Supports ==, != comparisons
       - Supports property access (source.X, target.X)
       - Supports can_depend_on method calls
-      - Supports exists checks
 
 internal:
   - eval_value
@@ -55,8 +97,6 @@ internal:
   - split_binary_op
   - parse_stability_literal
   - default_when
-
-# Data structures: Rule, RulesConfig, Severity, EvalContext, RuleViolation, LayersInput, LayerDepsInput
 
 depends_on:
   - src/spec.rs

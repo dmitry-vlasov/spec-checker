@@ -7,6 +7,65 @@ source_path: src/spec.rs
 layer: domain
 
 exposes:
+  ModuleSpec:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "serializable"
+      - "cloneable"
+      - "has_field(Self, module)"
+      - "has_field(Self, exposes)"
+      - "has_field(Self, internal)"
+      - "has_field(Self, depends_on)"
+      - "has_field(Self, forbidden_deps)"
+      - "has_field(Self, layer)"
+      - "has_field(Self, context)"
+      - "has_field(Self, stability)"
+
+  ExposeSpec:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "serializable"
+      - "cloneable"
+      - "has_field(Self, kind)"
+      - "has_field(Self, type_constraints)"
+      - "has_field(Self, requires)"
+      - "has_field(Self, ensures)"
+
+  SpecDefaults:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "serializable"
+      - "cloneable"
+      - "has_field(Self, language)"
+      - "has_field(Self, layer)"
+      - "has_field(Self, stability)"
+      - "has_field(Self, forbidden_deps)"
+
+  Layer:
+    kind: type
+    type_constraints:
+      - "serializable"
+      - "cloneable"
+
+  Stability:
+    kind: type
+    type_constraints:
+      - "is_sum(Self)"
+      - "serializable"
+      - "cloneable"
+      - "has_variant(Self, Stable)"
+      - "has_variant(Self, Normal)"
+      - "has_variant(Self, Volatile)"
+
+  LayerConfig:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "cloneable"
+
   ModuleSpec.from_extracted:
     kind: function
     type_constraints:
@@ -17,6 +76,49 @@ exposes:
       - Populates exposes from public_functions
       - Populates internal from private_functions
       - Populates emits from events
+
+  ModuleSpec.apply_defaults:
+    kind: function
+
+  SpecDefaults.merge:
+    kind: function
+    type_constraints:
+      - "equals(param(0), &Self)"
+      - "equals(return, SpecDefaults)"
+    ensures:
+      - "Scalars: child wins if set"
+      - "Lists: union of both"
+
+  Layer.new:
+    kind: function
+    type_constraints:
+      - "equals(param(name), &str)"
+      - "equals(return, Self)"
+    ensures:
+      - Lowercases the input name
+
+  LayerConfig.builtin:
+    kind: function
+    type_constraints:
+      - "equals(return, Self)"
+    ensures:
+      - Returns 4-layer model (infrastructure/domain/application/interface)
+
+  LayerConfig.can_depend_on:
+    kind: function
+    type_constraints:
+      - "equals(param(0), &Self)"
+      - "equals(return, bool)"
+
+  Stability.can_depend_on:
+    kind: function
+    type_constraints:
+      - "equals(param(0), &Self)"
+      - "equals(return, bool)"
+    ensures:
+      - Stable can only depend on Stable
+      - Normal cannot depend on Volatile
+      - Volatile can depend on anything
 
   resolve_defaults:
     kind: function
@@ -32,9 +134,6 @@ exposes:
 internal:
   - merge_optional_vecs
 
-# Data structures exposed (not functions, but types)
-# ModuleSpec, FunctionSpec, Layer, Stability, SpecDefaults
-
 depends_on:
   - src/extractors/mod.rs    # Uses ExtractedModule type
 
@@ -48,8 +147,6 @@ forbidden_deps:
 
 invariants:
   - "Layer dependencies are acyclic"
-  - "Infrastructure cannot depend on Domain/Application/Interface"
-  - "Domain cannot depend on Application/Interface"
   - "Stable cannot depend on Normal or Volatile"
   - "Normal cannot depend on Volatile"
   - "apply_defaults never overwrites explicitly set fields"

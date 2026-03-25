@@ -6,6 +6,21 @@ module: extractors
 source_path: src/extractors/mod.rs
 
 exposes:
+  ExtractedModule:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "cloneable"
+      - "has_field(Self, name)"
+      - "has_field(Self, language)"
+      - "has_field(Self, public_functions)"
+      - "has_field(Self, private_functions)"
+      - "has_field(Self, function_signatures)"
+      - "has_field(Self, imports)"
+      - "has_field(Self, events)"
+      - "has_field(Self, type_definitions)"
+      - "has_field(Self, function_info)"
+
   get_extractor:
     kind: function
     type_constraints:
@@ -17,9 +32,6 @@ exposes:
       - Returns SolidityExtractor for solidity/sol
       - Returns RustExtractor for rust/rs
       - Returns error for unsupported language
-
-# Trait: Extractor with extract() method
-# Struct: ExtractedModule
 
 depends_on:
   - src/extractors/solidity.rs
