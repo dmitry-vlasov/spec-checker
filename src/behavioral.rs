@@ -125,9 +125,15 @@ pub fn check_static_invariant(
     None
 }
 
+// TODO: These static checks use keyword scanning which produces false positives
+// when the source code itself deals with these patterns (e.g., a checker that
+// searches for "unsafe" will contain that keyword). The proper fix is to use
+// AST-based analysis (e.g., via syn for Rust) instead of string matching.
+// For now, we strip comments, string literals, and lines that are clearly
+// checking for these patterns rather than using them.
+
 fn check_no_panics(source: &str) -> InvariantResult {
-    // Look for panic patterns outside of test modules and string literals
-    let clean = strip_tests_and_strings(source);
+    let clean = strip_tests_strings_and_checks(source);
     let has_panic = clean.contains("panic!(")
         || clean.contains(".unwrap()")
         || clean.contains(".expect(");
@@ -144,7 +150,7 @@ fn check_no_panics(source: &str) -> InvariantResult {
 }
 
 fn check_no_unwrap(source: &str) -> InvariantResult {
-    let clean = strip_tests_and_strings(source);
+    let clean = strip_tests_strings_and_checks(source);
     let has_unwrap = clean.contains(".unwrap()");
 
     InvariantResult {
@@ -159,8 +165,9 @@ fn check_no_unwrap(source: &str) -> InvariantResult {
 }
 
 fn check_no_unsafe(source: &str) -> InvariantResult {
-    let clean = strip_tests_and_strings(source);
-    let has_unsafe = clean.contains("unsafe ");
+    let clean = strip_tests_strings_and_checks(source);
+    // Match "unsafe " as a keyword but not as part of identifiers like check_no_unsafe
+    let has_unsafe = has_unsafe_keyword(&clean);
 
     InvariantResult {
         satisfies: !has_unsafe,
@@ -171,6 +178,56 @@ fn check_no_unsafe(source: &str) -> InvariantResult {
         },
         tier: "static".into(),
     }
+}
+
+/// Check if source contains `unsafe` as a keyword (not part of an identifier).
+fn has_unsafe_keyword(source: &str) -> bool {
+    for line in source.lines() {
+        let trimmed = line.trim();
+        // Look for "unsafe" followed by space/brace (keyword use)
+        // but not preceded by alphanumeric/underscore (part of identifier)
+        let mut search_from = 0;
+        while let Some(pos) = trimmed[search_from..].find("unsafe") {
+            let abs_pos = search_from + pos;
+            let before_ok = abs_pos == 0
+                || !trimmed.as_bytes()[abs_pos - 1].is_ascii_alphanumeric()
+                    && trimmed.as_bytes()[abs_pos - 1] != b'_';
+            let after_pos = abs_pos + 6;
+            let after_ok = after_pos >= trimmed.len()
+                || !trimmed.as_bytes()[after_pos].is_ascii_alphanumeric()
+                    && trimmed.as_bytes()[after_pos] != b'_';
+            if before_ok && after_ok {
+                return true;
+            }
+            search_from = abs_pos + 6;
+        }
+    }
+    false
+}
+
+/// Strip tests, string literals, AND lines that are checking for patterns
+/// (e.g., `.contains("panic!(")`) to avoid false positives in code that
+/// is itself a checker for those patterns.
+fn strip_tests_strings_and_checks(source: &str) -> String {
+    let cleaned = strip_tests_and_strings(source);
+    let mut result = String::new();
+    for line in cleaned.lines() {
+        let trimmed = line.trim();
+        // Skip lines that are clearly pattern-matching checks, not actual usage:
+        // - .contains("...") calls
+        // - lines that are string literals being assigned (reasoning messages)
+        // - lines inside if conditions checking for keywords
+        if trimmed.contains(".contains(\"")
+            || trimmed.contains(".contains(&\"")
+            || trimmed.contains("lower.contains")
+            || trimmed.starts_with("//")
+        {
+            continue;
+        }
+        result.push_str(line);
+        result.push('\n');
+    }
+    result
 }
 
 /// Strip test modules from source code (public for use by checker).
@@ -376,7 +433,12 @@ Respond with ONLY a JSON object, no other text:
     )
 }
 
-/// Call the LLM API to verify an invariant
+/// Maximum number of retries for rate-limited requests
+const MAX_RETRIES: u32 = 5;
+/// Initial backoff delay in milliseconds
+const INITIAL_BACKOFF_MS: u64 = 2000;
+
+/// Call the LLM API to verify an invariant, with retry on rate limits.
 pub async fn llm_verify(
     code: &str,
     invariant: &str,
@@ -395,20 +457,52 @@ pub async fn llm_verify(
         }]
     });
 
-    let resp = client
-        .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", api_key)
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .json(&body)
-        .send()
-        .await?;
+    let mut last_error = String::new();
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("LLM API error ({}): {}", status, text);
+    for attempt in 0..=MAX_RETRIES {
+        if attempt > 0 {
+            // Exponential backoff: 2s, 4s, 8s, 16s, 32s
+            let delay = INITIAL_BACKOFF_MS * 2u64.pow(attempt - 1);
+            eprintln!(
+                "  [retry {}/{}] Rate limited, waiting {}s...",
+                attempt, MAX_RETRIES, delay / 1000
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+        }
+
+        let resp = client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        if resp.status() == 429 {
+            last_error = resp.text().await.unwrap_or_default();
+            continue; // retry
+        }
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("LLM API error ({}): {}", status, text);
+        }
+
+        // Success — parse the response
+        return parse_llm_response(resp).await;
     }
+
+    anyhow::bail!(
+        "LLM API rate limited after {} retries: {}",
+        MAX_RETRIES,
+        last_error
+    )
+}
+
+/// Parse a successful LLM API response into an InvariantResult
+async fn parse_llm_response(resp: reqwest::Response) -> anyhow::Result<InvariantResult> {
 
     let api_resp: serde_json::Value = resp.json().await?;
 

@@ -362,6 +362,9 @@ Every constraint check goes through a cascade of increasingly powerful checkers:
 - Protocol state machine validation
 - State ownership conflicts
 - Balanced pair call counting
+- Static invariant checks ("no panics", "no unsafe", "no unwrap")
+
+**Note on static invariant checks**: The current static checks use keyword scanning (searching for patterns like `unwrap()`, `unsafe` in source text). This approach can produce false positives when the source code itself is a checker that searches for those patterns. The checker attempts to filter out `.contains("...")` lines and similar meta-patterns, but this is inherently imprecise. A proper solution would use AST-based analysis (e.g., via `syn` for Rust). This is a known limitation.
 
 ### Tier 2: SMT Solver (when z3 is available)
 - State ownership mutual exclusion (formally verified)
@@ -385,6 +388,8 @@ ANTHROPIC_API_KEY=sk-ant-... spec-checker check ./specs -s . --llm-check full
 ```
 
 Results are cached in `.spec-cache/` keyed by `sha256(code + invariant)`. Unchanged code = zero token spend.
+
+Rate-limited requests (HTTP 429) are automatically retried with exponential backoff (up to 5 retries: 2s, 4s, 8s, 16s, 32s).
 
 **Important**: LLM verification is not formal proof. Results are clearly labeled as "LLM-verified".
 
