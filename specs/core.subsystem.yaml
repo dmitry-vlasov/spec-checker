@@ -1,0 +1,28 @@
+# Core verification subsystem
+# Groups the domain-layer modules that form the spec-type verification engine
+
+subsystem: CoreVerification
+modules:
+  - src/spec.rs
+  - src/checker.rs
+  - src/type_formula.rs
+  - src/types.rs
+  - src/rules.rs
+  - src/smt.rs
+
+exposes:
+  check:
+    delegates_to: checker.SpecChecker.check
+  check_composition:
+    delegates_to: checker.SpecChecker.check_composition
+
+invariants:
+  - "All constraint kinds share the same verification cascade"
+  - "Composition checking is independent of per-module checking"
+
+forbidden_deps:
+  - clap
+  - colored
+
+context: core
+stability: stable

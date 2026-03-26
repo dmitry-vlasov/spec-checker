@@ -234,6 +234,67 @@ pub struct Transition {
     pub to: String,
 }
 
+// ─── Subsystem Specification ─────────────────────────────────────────────────
+
+/// A subsystem groups multiple modules into a higher-level unit with its own
+/// interface, invariants, and dependency constraints.
+///
+/// Subsystems are the next level up from modules in the spec-type hierarchy:
+///   expression → function → type → module → **subsystem** → system
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubsystemSpec {
+    /// Subsystem name
+    pub subsystem: String,
+
+    /// Module source paths that compose this subsystem
+    #[serde(default)]
+    pub modules: Vec<String>,
+
+    /// Publicly exposed interface of the subsystem
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub exposes: HashMap<String, SubsystemExposeSpec>,
+
+    /// Subsystem-level invariants
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invariants: Vec<String>,
+
+    /// Other subsystems this one depends on
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
+
+    /// Forbidden subsystem dependencies
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forbidden_deps: Vec<String>,
+
+    /// Architectural layer (same concept as module layer, coarser grain)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<Layer>,
+
+    /// Bounded context
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+
+    /// Stability level
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stability: Option<Stability>,
+}
+
+/// A subsystem-level exposed interface entry.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SubsystemExposeSpec {
+    /// Which module.function this delegates to
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegates_to: Option<String>,
+
+    /// Subsystem-level preconditions
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<String>,
+
+    /// Subsystem-level postconditions
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ensures: Vec<String>,
+}
+
 /// Specification for an exposed entity (function, type, trait, etc.)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExposeSpec {

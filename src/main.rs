@@ -194,6 +194,34 @@ fn cmd_check(
         }
     }
 
+    // ── Subsystem checks ──────────────────────────────────────────────────
+    let subsystem_specs = load_subsystem_specs(spec_path);
+    if !subsystem_specs.is_empty() {
+        println!("{}", "Subsystem Checks".bold().cyan());
+
+        for subsystem in &subsystem_specs {
+            println!("{} {}", "Checking subsystem:".bold(), subsystem.subsystem.cyan());
+
+            let sub_result = checker.check_subsystem(subsystem, &specs);
+
+            for error in &sub_result.errors {
+                println!("  {} {}", "✗".red(), error);
+                total_errors += 1;
+            }
+
+            for warning in &sub_result.warnings {
+                println!("  {} {}", "⚠".yellow(), warning);
+                total_warnings += 1;
+            }
+
+            if sub_result.errors.is_empty() && sub_result.warnings.is_empty() {
+                println!("  {} All checks passed", "✓".green());
+            }
+
+            println!();
+        }
+    }
+
     // ── Behavioral checks ──────────────────────────────────────────────────
     if llm_mode != behavioral::LlmCheckMode::Off {
         println!();
@@ -533,6 +561,28 @@ fn load_spec(path: &PathBuf) -> Result<ModuleSpec> {
     let content = std::fs::read_to_string(path)?;
     let spec: ModuleSpec = serde_yaml::from_str(&content)?;
     Ok(spec)
+}
+
+fn load_subsystem_specs(path: &PathBuf) -> Vec<spec::SubsystemSpec> {
+    let mut subsystems = Vec::new();
+
+    if path.is_dir() {
+        let pattern = format!("{}/**/*.subsystem.yaml", path.display());
+        if let Ok(entries) = glob::glob(&pattern) {
+            for entry in entries.flatten() {
+                if let Ok(content) = std::fs::read_to_string(&entry) {
+                    match serde_yaml::from_str::<spec::SubsystemSpec>(&content) {
+                        Ok(sub) => subsystems.push(sub),
+                        Err(e) => {
+                            eprintln!("  Warning: failed to parse {}: {}", entry.display(), e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    subsystems
 }
 
 fn detect_language(path: &PathBuf) -> Option<String> {

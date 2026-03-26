@@ -6,7 +6,7 @@ use crate::behavioral;
 use crate::extractors::{get_extractor, ExtractedModule};
 use crate::rules::{self, Rule, RulesConfig, Severity as RuleSeverity};
 use crate::smt;
-use crate::spec::{LayerConfig, ModuleSpec};
+use crate::spec::{LayerConfig, ModuleSpec, SubsystemSpec};
 use crate::type_formula::{self, TypeEvalContext};
 
 /// Count occurrences of a function call in source code.
@@ -353,6 +353,167 @@ impl SpecChecker {
 
         // 3. SMT-based state ownership consistency (when z3 is available)
         self.check_state_ownership_smt(specs, &mut result);
+
+        result
+    }
+
+    /// Check a subsystem spec against its constituent module specs.
+    ///
+    /// Verifies:
+    /// - All listed modules exist in the loaded specs
+    /// - Delegated interface functions exist in their target modules
+    /// - Internal module dependencies don't leak outside the subsystem
+    /// - Cross-subsystem dependency constraints are respected
+    pub fn check_subsystem(
+        &self,
+        subsystem: &SubsystemSpec,
+        module_specs: &[ModuleSpec],
+    ) -> CheckResult {
+        let mut result = CheckResult::default();
+
+        // Build lookup: source_path -> ModuleSpec
+        let spec_by_path: HashMap<&str, &ModuleSpec> = module_specs
+            .iter()
+            .filter_map(|s| s.source_path.as_deref().map(|p| (p, s)))
+            .collect();
+
+        let spec_by_module: HashMap<&str, &ModuleSpec> = module_specs
+            .iter()
+            .map(|s| (s.module.as_str(), s))
+            .collect();
+
+        // 1. Check that all listed modules exist
+        let mut member_modules: Vec<&ModuleSpec> = Vec::new();
+        for module_path in &subsystem.modules {
+            match spec_by_path.get(module_path.as_str()) {
+                Some(spec) => member_modules.push(spec),
+                None => {
+                    // Try by module name
+                    let module_name = Self::extract_module_name(module_path);
+                    match spec_by_module.get(module_name.as_str()) {
+                        Some(spec) => member_modules.push(spec),
+                        None => {
+                            result.constraint_error(
+                                ConstraintKind::Structural,
+                                VerificationTier::Syntactic,
+                                format!(
+                                    "Subsystem '{}' lists module '{}' but no matching spec found",
+                                    subsystem.subsystem, module_path
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Check delegated interface
+        for (name, expose) in &subsystem.exposes {
+            if let Some(ref delegates_to) = expose.delegates_to {
+                // Parse "Module.function" format
+                let parts: Vec<&str> = delegates_to.splitn(2, '.').collect();
+                if parts.len() != 2 {
+                    result.constraint_error(
+                        ConstraintKind::Structural,
+                        VerificationTier::Syntactic,
+                        format!(
+                            "Subsystem '{}': '{}' delegates_to '{}' — expected 'Module.function' format",
+                            subsystem.subsystem, name, delegates_to
+                        ),
+                    );
+                    continue;
+                }
+
+                let target_module = parts[0];
+                let target_func = parts[1];
+
+                // Check that the target module is in this subsystem
+                let target_spec = member_modules
+                    .iter()
+                    .find(|s| s.module == target_module);
+
+                match target_spec {
+                    None => {
+                        result.constraint_error(
+                            ConstraintKind::Structural,
+                            VerificationTier::Syntactic,
+                            format!(
+                                "Subsystem '{}': '{}' delegates to module '{}' which is not a member",
+                                subsystem.subsystem, name, target_module
+                            ),
+                        );
+                    }
+                    Some(spec) => {
+                        // Check that the target function exists in the module's exposes
+                        let func_key = format!("{}.{}", target_module, target_func);
+                        let has_func = spec.exposes.contains_key(target_func)
+                            || spec.exposes.contains_key(&func_key);
+
+                        if !has_func {
+                            result.constraint_error(
+                                ConstraintKind::Structural,
+                                VerificationTier::Syntactic,
+                                format!(
+                                    "Subsystem '{}': '{}' delegates to '{}.{}' but '{}' is not in module's exposes",
+                                    subsystem.subsystem, name, target_module, target_func, target_func
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Check that internal dependencies stay within subsystem
+        let member_paths: std::collections::HashSet<&str> = subsystem
+            .modules
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        let member_names: std::collections::HashSet<&str> = member_modules
+            .iter()
+            .map(|s| s.module.as_str())
+            .collect();
+
+        for member in &member_modules {
+            for dep in &member.depends_on {
+                let dep_name = Self::extract_module_name(dep);
+                let is_internal = member_paths.contains(dep.as_str())
+                    || member_names.contains(dep_name.as_str());
+                let is_external_dep = member.external_deps.iter().any(|e| dep.contains(e));
+
+                if !is_internal && !is_external_dep {
+                    // Module depends on something outside the subsystem
+                    result.constraint_warning(
+                        ConstraintKind::Dependency,
+                        VerificationTier::Syntactic,
+                        format!(
+                            "Subsystem '{}': module '{}' depends on '{}' which is outside the subsystem",
+                            subsystem.subsystem, member.module, dep
+                        ),
+                    );
+                }
+            }
+        }
+
+        // 4. Check forbidden subsystem dependencies
+        for forbidden in &subsystem.forbidden_deps {
+            for member in &member_modules {
+                for dep in &member.depends_on {
+                    let dep_name = Self::extract_module_name(dep);
+                    if dep.contains(forbidden) || dep_name == *forbidden {
+                        result.constraint_error(
+                            ConstraintKind::Dependency,
+                            VerificationTier::Syntactic,
+                            format!(
+                                "Subsystem '{}': module '{}' depends on '{}' which matches forbidden subsystem dependency '{}'",
+                                subsystem.subsystem, member.module, dep, forbidden
+                            ),
+                        );
+                    }
+                }
+            }
+        }
 
         result
     }
@@ -2675,5 +2836,256 @@ fn main() {
         assert_eq!(count_calls(source, "open"), 2); // bare call + method call
         assert_eq!(count_calls(source, "close"), 1);
         assert_eq!(count_calls(source, "missing"), 0);
+    }
+
+    // ── Subsystem tests ─────────────────────────────────────────────────
+
+    use crate::spec::{SubsystemSpec, SubsystemExposeSpec};
+
+    #[test]
+    fn test_subsystem_valid() {
+        let mut exposes = HashMap::new();
+        exposes.insert("deposit".to_string(), ExposeSpec {
+            kind: Some("function".to_string()),
+            ..Default::default()
+        });
+
+        let bridge_spec = ModuleSpec {
+            module: "bridge".to_string(),
+            source_path: Some("src/bridge.rs".to_string()),
+            exposes,
+            ..Default::default()
+        };
+
+        let registry_spec = ModuleSpec {
+            module: "registry".to_string(),
+            source_path: Some("src/registry.rs".to_string()),
+            ..Default::default()
+        };
+
+        let mut sub_exposes = HashMap::new();
+        sub_exposes.insert("deposit".to_string(), SubsystemExposeSpec {
+            delegates_to: Some("bridge.deposit".to_string()),
+            ..Default::default()
+        });
+
+        let subsystem = SubsystemSpec {
+            subsystem: "PaymentService".to_string(),
+            modules: vec!["src/bridge.rs".to_string(), "src/registry.rs".to_string()],
+            exposes: sub_exposes,
+            invariants: vec![],
+            depends_on: vec![],
+            forbidden_deps: vec![],
+            layer: None,
+            context: None,
+            stability: None,
+        };
+
+        let module_specs = vec![bridge_spec, registry_spec];
+        let checker = SpecChecker::new(std::path::PathBuf::from("/tmp"));
+        let result = checker.check_subsystem(&subsystem, &module_specs);
+
+        assert!(
+            result.is_ok(),
+            "Valid subsystem should pass but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_subsystem_missing_module() {
+        let subsystem = SubsystemSpec {
+            subsystem: "Service".to_string(),
+            modules: vec!["src/missing.rs".to_string()],
+            exposes: HashMap::new(),
+            invariants: vec![],
+            depends_on: vec![],
+            forbidden_deps: vec![],
+            layer: None,
+            context: None,
+            stability: None,
+        };
+
+        let checker = SpecChecker::new(std::path::PathBuf::from("/tmp"));
+        let result = checker.check_subsystem(&subsystem, &[]);
+
+        assert!(
+            result.errors.iter().any(|e| e.contains("missing.rs") && e.contains("no matching spec")),
+            "Expected error about missing module but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_subsystem_bad_delegation() {
+        let bridge_spec = ModuleSpec {
+            module: "bridge".to_string(),
+            source_path: Some("src/bridge.rs".to_string()),
+            exposes: HashMap::new(), // no functions exposed
+            ..Default::default()
+        };
+
+        let mut sub_exposes = HashMap::new();
+        sub_exposes.insert("deposit".to_string(), SubsystemExposeSpec {
+            delegates_to: Some("bridge.deposit".to_string()),
+            ..Default::default()
+        });
+
+        let subsystem = SubsystemSpec {
+            subsystem: "Service".to_string(),
+            modules: vec!["src/bridge.rs".to_string()],
+            exposes: sub_exposes,
+            invariants: vec![],
+            depends_on: vec![],
+            forbidden_deps: vec![],
+            layer: None,
+            context: None,
+            stability: None,
+        };
+
+        let module_specs = vec![bridge_spec];
+        let checker = SpecChecker::new(std::path::PathBuf::from("/tmp"));
+        let result = checker.check_subsystem(&subsystem, &module_specs);
+
+        assert!(
+            result.errors.iter().any(|e| e.contains("deposit") && e.contains("not in module's exposes")),
+            "Expected error about missing delegation target but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_subsystem_delegation_to_nonmember() {
+        let bridge_spec = ModuleSpec {
+            module: "bridge".to_string(),
+            source_path: Some("src/bridge.rs".to_string()),
+            ..Default::default()
+        };
+
+        let mut sub_exposes = HashMap::new();
+        sub_exposes.insert("auth".to_string(), SubsystemExposeSpec {
+            delegates_to: Some("auth_service.login".to_string()),
+            ..Default::default()
+        });
+
+        let subsystem = SubsystemSpec {
+            subsystem: "Service".to_string(),
+            modules: vec!["src/bridge.rs".to_string()],
+            exposes: sub_exposes,
+            invariants: vec![],
+            depends_on: vec![],
+            forbidden_deps: vec![],
+            layer: None,
+            context: None,
+            stability: None,
+        };
+
+        let module_specs = vec![bridge_spec];
+        let checker = SpecChecker::new(std::path::PathBuf::from("/tmp"));
+        let result = checker.check_subsystem(&subsystem, &module_specs);
+
+        assert!(
+            result.errors.iter().any(|e| e.contains("auth_service") && e.contains("not a member")),
+            "Expected error about delegation to non-member but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_subsystem_external_dependency_warning() {
+        let bridge_spec = ModuleSpec {
+            module: "bridge".to_string(),
+            source_path: Some("src/bridge.rs".to_string()),
+            depends_on: vec!["src/external.rs".to_string()],
+            ..Default::default()
+        };
+
+        let subsystem = SubsystemSpec {
+            subsystem: "Service".to_string(),
+            modules: vec!["src/bridge.rs".to_string()],
+            exposes: HashMap::new(),
+            invariants: vec![],
+            depends_on: vec![],
+            forbidden_deps: vec![],
+            layer: None,
+            context: None,
+            stability: None,
+        };
+
+        let module_specs = vec![bridge_spec];
+        let checker = SpecChecker::new(std::path::PathBuf::from("/tmp"));
+        let result = checker.check_subsystem(&subsystem, &module_specs);
+
+        assert!(
+            result.warnings.iter().any(|w| w.contains("external.rs") && w.contains("outside the subsystem")),
+            "Expected warning about external dependency but got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_subsystem_forbidden_dep() {
+        let bridge_spec = ModuleSpec {
+            module: "bridge".to_string(),
+            source_path: Some("src/bridge.rs".to_string()),
+            depends_on: vec!["src/test_utils.rs".to_string()],
+            ..Default::default()
+        };
+
+        let subsystem = SubsystemSpec {
+            subsystem: "Service".to_string(),
+            modules: vec!["src/bridge.rs".to_string()],
+            exposes: HashMap::new(),
+            invariants: vec![],
+            depends_on: vec![],
+            forbidden_deps: vec!["test_utils".to_string()],
+            layer: None,
+            context: None,
+            stability: None,
+        };
+
+        let module_specs = vec![bridge_spec];
+        let checker = SpecChecker::new(std::path::PathBuf::from("/tmp"));
+        let result = checker.check_subsystem(&subsystem, &module_specs);
+
+        assert!(
+            result.errors.iter().any(|e| e.contains("test_utils") && e.contains("forbidden")),
+            "Expected error about forbidden subsystem dependency but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_subsystem_yaml_deserialization() {
+        let yaml = r#"
+subsystem: PaymentService
+modules:
+  - src/bridge.rs
+  - src/registry.rs
+exposes:
+  deposit:
+    delegates_to: bridge.deposit
+    requires:
+      - amount > 0
+    ensures:
+      - balance increases
+invariants:
+  - "total_deposited >= total_withdrawn"
+depends_on: [AuthService]
+forbidden_deps: [TestUtils]
+layer: application
+context: payments
+stability: stable
+"#;
+        let sub: SubsystemSpec = serde_yaml::from_str(yaml).unwrap();
+
+        assert_eq!(sub.subsystem, "PaymentService");
+        assert_eq!(sub.modules.len(), 2);
+        assert_eq!(sub.exposes.len(), 1);
+        assert_eq!(sub.exposes["deposit"].delegates_to, Some("bridge.deposit".to_string()));
+        assert_eq!(sub.exposes["deposit"].requires.len(), 1);
+        assert_eq!(sub.invariants.len(), 1);
+        assert_eq!(sub.depends_on, vec!["AuthService"]);
+        assert_eq!(sub.forbidden_deps, vec!["TestUtils"]);
     }
 }

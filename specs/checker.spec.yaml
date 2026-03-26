@@ -106,6 +106,24 @@ exposes:
       - Returns errors for architectural rule violations
       - Returns warnings for unlisted dependencies
 
+  SpecChecker.check_composition:
+    kind: function
+    type_constraints:
+      - "equals(param(0), Self)"
+    ensures:
+      - Checks event subscribe/emit matching across modules
+      - Checks contract compatibility at dependency boundaries
+      - Runs SMT state ownership consistency when z3 available
+
+  SpecChecker.check_subsystem:
+    kind: function
+    type_constraints:
+      - "equals(param(0), Self)"
+    ensures:
+      - Verifies all listed modules exist
+      - Checks delegated interface targets exist
+      - Warns about dependencies outside subsystem
+
 depends_on:
   - src/extractors/mod.rs
   - src/spec.rs
