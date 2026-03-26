@@ -507,8 +507,24 @@ impl LlmConfig {
         let base = self.endpoint.trim_end_matches('/');
         match self.provider {
             LlmProvider::Anthropic => format!("{}/v1/messages", base),
-            LlmProvider::OpenAICompatible => format!("{}/chat/completions", base),
+            LlmProvider::OpenAICompatible => {
+                // Use Ollama native API (/api/chat) when endpoint looks like Ollama,
+                // otherwise use OpenAI-compatible endpoint
+                if base.contains("11434") || base.ends_with("/api") {
+                    let ollama_base = base
+                        .trim_end_matches("/v1")
+                        .trim_end_matches("/api");
+                    format!("{}/api/chat", ollama_base)
+                } else {
+                    format!("{}/chat/completions", base)
+                }
+            }
         }
+    }
+
+    /// Check if this config points to an Ollama instance.
+    pub fn is_ollama(&self) -> bool {
+        self.endpoint.contains("11434")
     }
 }
 
@@ -519,8 +535,15 @@ struct LlmResponse {
     reasoning: String,
 }
 
-/// Build the prompt for an LLM behavioral check
-fn build_prompt(code: &str, invariant: &str) -> String {
+/// Build the prompt for an LLM behavioral check.
+/// For OpenAI-compatible providers (local LLMs), appends /no_think
+/// to disable thinking/reasoning mode (e.g., Qwen 3.5) which would
+/// otherwise consume all tokens on internal reasoning.
+fn build_prompt(code: &str, invariant: &str, provider: &LlmProvider) -> String {
+    let no_think = match provider {
+        LlmProvider::OpenAICompatible => " /no_think",
+        LlmProvider::Anthropic => "",
+    };
     format!(
         r#"You are verifying whether source code satisfies a specification invariant.
 
@@ -535,7 +558,7 @@ fn build_prompt(code: &str, invariant: &str) -> String {
 ## Instructions:
 Analyze the code and determine whether it satisfies the invariant.
 Respond with ONLY a JSON object, no other text:
-{{"satisfies": true/false, "reasoning": "your explanation in 1-2 sentences"}}"#
+{{"satisfies": true/false, "reasoning": "your explanation in 1-2 sentences"}}{no_think}"#
     )
 }
 
@@ -553,8 +576,12 @@ pub async fn llm_verify(
 ) -> anyhow::Result<InvariantResult> {
     let api_key = config.api_key.as_deref().unwrap_or("");
     let client = reqwest::Client::new();
-    let prompt = build_prompt(code, invariant);
+    let prompt = build_prompt(code, invariant, &config.provider);
     let url = config.api_url();
+    let max_tokens = match config.provider {
+        LlmProvider::Anthropic => 256,
+        LlmProvider::OpenAICompatible => 1024, // local models need more room
+    };
 
     let mut last_error = String::new();
 
@@ -572,7 +599,7 @@ pub async fn llm_verify(
             LlmProvider::Anthropic => {
                 let body = serde_json::json!({
                     "model": config.model,
-                    "max_tokens": 256,
+                    "max_tokens": max_tokens,
                     "messages": [{ "role": "user", "content": prompt }]
                 });
                 client
@@ -585,11 +612,22 @@ pub async fn llm_verify(
                     .await?
             }
             LlmProvider::OpenAICompatible => {
-                let body = serde_json::json!({
-                    "model": config.model,
-                    "max_tokens": 256,
-                    "messages": [{ "role": "user", "content": prompt }]
-                });
+                let body = if config.is_ollama() {
+                    // Ollama native API format
+                    serde_json::json!({
+                        "model": config.model,
+                        "stream": false,
+                        "options": { "num_ctx": 32768 },
+                        "messages": [{ "role": "user", "content": prompt }]
+                    })
+                } else {
+                    // Standard OpenAI-compatible format
+                    serde_json::json!({
+                        "model": config.model,
+                        "max_tokens": max_tokens,
+                        "messages": [{ "role": "user", "content": prompt }]
+                    })
+                };
                 let mut req = client
                     .post(&url)
                     .header("content-type", "application/json");
@@ -634,13 +672,23 @@ async fn parse_llm_response(
         LlmProvider::Anthropic => api_resp["content"][0]["text"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Unexpected Anthropic response format"))?,
-        LlmProvider::OpenAICompatible => api_resp["choices"][0]["message"]["content"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Unexpected OpenAI-compatible response format"))?,
+        LlmProvider::OpenAICompatible => {
+            // Try Ollama native format first, then OpenAI-compatible
+            api_resp["message"]["content"]
+                .as_str()
+                .or_else(|| api_resp["choices"][0]["message"]["content"].as_str())
+                .ok_or_else(|| anyhow::anyhow!(
+                    "Unexpected response format: {}",
+                    serde_json::to_string_pretty(&api_resp).unwrap_or_default()
+                ))?
+        }
     };
 
-    // Strip markdown code blocks if present
+    // Clean up response text
     let text = text.trim();
+    // Strip /no_think if echoed back by the model
+    let text = text.trim_end_matches("/no_think").trim();
+    // Strip markdown code blocks if present
     let text = if text.starts_with("```") {
         let inner = text.trim_start_matches("```json").trim_start_matches("```");
         inner.trim_end_matches("```").trim()
@@ -666,7 +714,7 @@ async fn parse_llm_response(
 /// Estimate token count for a code+invariant pair (rough approximation)
 pub fn estimate_tokens(code: &str, invariant: &str) -> usize {
     // Rough: ~4 chars per token for English/code
-    let prompt = build_prompt(code, invariant);
+    let prompt = build_prompt(code, invariant, &LlmProvider::Anthropic);
     prompt.len() / 4 + 100 // +100 for output tokens
 }
 
