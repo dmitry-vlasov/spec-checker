@@ -173,6 +173,44 @@ fn check_no_unsafe(source: &str) -> InvariantResult {
     }
 }
 
+/// Strip test modules from source code (public for use by checker).
+pub fn strip_tests(source: &str) -> String {
+    let mut result = String::new();
+    let mut in_test_module = false;
+    let mut brace_depth = 0i32;
+    let mut test_start_depth = 0i32;
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.contains("#[cfg(test)]") {
+            in_test_module = true;
+            test_start_depth = brace_depth;
+            continue;
+        }
+
+        for ch in trimmed.chars() {
+            match ch {
+                '{' => brace_depth += 1,
+                '}' => {
+                    brace_depth -= 1;
+                    if in_test_module && brace_depth <= test_start_depth {
+                        in_test_module = false;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if !in_test_module {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+
+    result
+}
+
 /// Rough strip of test modules and string literals to avoid false positives
 fn strip_tests_and_strings(source: &str) -> String {
     let mut result = String::new();

@@ -2,11 +2,51 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::behavioral;
 use crate::extractors::{get_extractor, ExtractedModule};
 use crate::rules::{self, Rule, RulesConfig, Severity as RuleSeverity};
 use crate::smt;
 use crate::spec::{LayerConfig, ModuleSpec};
 use crate::type_formula::{self, TypeEvalContext};
+
+/// Count occurrences of a function call in source code.
+/// Looks for patterns like `name(` accounting for method call syntax `.name(`.
+fn count_calls(source: &str, name: &str) -> usize {
+    let mut count = 0;
+    let pattern_dot = format!(".{}(", name);
+    let pattern_bare = format!("{}(", name);
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+        // Skip comments
+        if trimmed.starts_with("//") || trimmed.starts_with('#') {
+            continue;
+        }
+
+        // Count method-style calls: .name(
+        count += trimmed.matches(&pattern_dot).count();
+
+        // Count bare function calls: name(
+        // But exclude method-style (already counted) and definition-style
+        let mut search_from = 0;
+        while let Some(pos) = trimmed[search_from..].find(&pattern_bare) {
+            let abs_pos = search_from + pos;
+            // Check it's not preceded by '.' (already counted as method)
+            if abs_pos > 0 && trimmed.as_bytes().get(abs_pos - 1) == Some(&b'.') {
+                search_from = abs_pos + pattern_bare.len();
+                continue;
+            }
+            // Check it's not a function definition (preceded by 'fn ')
+            if abs_pos >= 3 && &trimmed[abs_pos.saturating_sub(3)..abs_pos] == "fn " {
+                search_from = abs_pos + pattern_bare.len();
+                continue;
+            }
+            count += 1;
+            search_from = abs_pos + pattern_bare.len();
+        }
+    }
+    count
+}
 
 // ─── Spec-Type Constraint Model ──────────────────────────────────────────────
 
@@ -259,6 +299,16 @@ impl SpecChecker {
         self.check_state_constraints(spec, &extracted, &mut result);
         self.check_protocol(spec, &extracted, &mut result);
 
+        // Balanced pairs static analysis (requires source code)
+        if let Some(protocol) = &spec.protocol {
+            if !protocol.balanced_pairs.is_empty() {
+                let source_code = std::fs::read_to_string(&source_path).unwrap_or_default();
+                if !source_code.is_empty() {
+                    self.check_balanced_pairs(spec, protocol, &source_code, &mut result);
+                }
+            }
+        }
+
         Ok(result)
     }
 
@@ -296,6 +346,7 @@ impl SpecChecker {
                 if let Some(target_spec) = target {
                     self.check_interface_compatibility(spec, target_spec, &mut result);
                     self.check_contract_compatibility(spec, target_spec, &mut result);
+                    self.check_cross_module_protocol(spec, target_spec, &mut result);
                 }
             }
         }
@@ -466,6 +517,82 @@ impl SpecChecker {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// Cross-module protocol compatibility (Phase 2c).
+    ///
+    /// When module A depends on module B and B has a protocol:
+    /// - Events A subscribes to that B emits should correspond to protocol transitions
+    /// - Functions A exposes that call B's functions should respect B's protocol
+    fn check_cross_module_protocol(
+        &self,
+        consumer: &ModuleSpec,
+        provider: &ModuleSpec,
+        result: &mut CheckResult,
+    ) {
+        let protocol = match &provider.protocol {
+            Some(p) => p,
+            None => return,
+        };
+
+        // Check that events the consumer subscribes to from the provider
+        // correspond to actual protocol transitions in the provider
+        for event in &consumer.subscribes {
+            if provider.emits.contains(event) {
+                // The provider emits this event — check if it's part of a transition
+                let is_in_protocol = protocol
+                    .transitions
+                    .iter()
+                    .any(|t| t.call == *event);
+
+                if !is_in_protocol && !protocol.transitions.is_empty() {
+                    result.constraint_warning(
+                        ConstraintKind::Protocol,
+                        VerificationTier::Syntactic,
+                        format!(
+                            "Module '{}' subscribes to '{}' from '{}', but '{}' is not a \
+                             protocol transition in '{}'",
+                            consumer.module, event, provider.module, event, provider.module
+                        ),
+                    );
+                }
+            }
+        }
+
+        // Check that balanced pairs in provider are not split across module boundary
+        // (i.e., consumer shouldn't call only one half of a balanced pair)
+        for pair in &protocol.balanced_pairs {
+            let consumer_calls_open = consumer.exposes.values().any(|e| {
+                e.requires.iter().any(|r| r.contains(&pair[0]))
+                    || e.ensures.iter().any(|r| r.contains(&pair[0]))
+            });
+            let consumer_calls_close = consumer.exposes.values().any(|e| {
+                e.requires.iter().any(|r| r.contains(&pair[1]))
+                    || e.ensures.iter().any(|r| r.contains(&pair[1]))
+            });
+
+            if consumer_calls_open && !consumer_calls_close {
+                result.constraint_warning(
+                    ConstraintKind::Protocol,
+                    VerificationTier::Syntactic,
+                    format!(
+                        "Module '{}' references '{}' from '{}' but not its balanced pair '{}' — \
+                         potential resource leak",
+                        consumer.module, pair[0], provider.module, pair[1]
+                    ),
+                );
+            } else if consumer_calls_close && !consumer_calls_open {
+                result.constraint_warning(
+                    ConstraintKind::Protocol,
+                    VerificationTier::Syntactic,
+                    format!(
+                        "Module '{}' references '{}' from '{}' but not its balanced pair '{}' — \
+                         potential double-close or use before open",
+                        consumer.module, pair[1], provider.module, pair[0]
+                    ),
+                );
             }
         }
     }
@@ -808,6 +935,59 @@ impl SpecChecker {
                         ),
                     );
                 }
+            }
+        }
+    }
+
+    /// Static analysis for balanced call pairs (Phase 2b).
+    ///
+    /// For each balanced pair [open, close], counts occurrences in source code
+    /// (outside test modules) and warns if they're imbalanced.
+    fn check_balanced_pairs(
+        &self,
+        spec: &ModuleSpec,
+        protocol: &crate::spec::ProtocolSpec,
+        source_code: &str,
+        result: &mut CheckResult,
+    ) {
+        // Strip test modules for analysis
+        let clean_source = behavioral::strip_tests(source_code);
+
+        for pair in &protocol.balanced_pairs {
+            let open_fn = &pair[0];
+            let close_fn = &pair[1];
+
+            // Count call occurrences (simple pattern: function_name followed by '(')
+            let open_count = count_calls(&clean_source, open_fn);
+            let close_count = count_calls(&clean_source, close_fn);
+
+            if open_count > 0 && close_count == 0 {
+                result.constraint_warning(
+                    ConstraintKind::Protocol,
+                    VerificationTier::Syntactic,
+                    format!(
+                        "Balanced pair [{}, {}]: '{}' called {} time(s) but '{}' never called in '{}'",
+                        open_fn, close_fn, open_fn, open_count, close_fn, spec.module
+                    ),
+                );
+            } else if close_count > 0 && open_count == 0 {
+                result.constraint_warning(
+                    ConstraintKind::Protocol,
+                    VerificationTier::Syntactic,
+                    format!(
+                        "Balanced pair [{}, {}]: '{}' called {} time(s) but '{}' never called in '{}'",
+                        open_fn, close_fn, close_fn, close_count, open_fn, spec.module
+                    ),
+                );
+            } else if open_count != close_count && open_count > 0 {
+                result.constraint_warning(
+                    ConstraintKind::Protocol,
+                    VerificationTier::Syntactic,
+                    format!(
+                        "Balanced pair [{}, {}]: call count mismatch in '{}' ({} opens vs {} closes)",
+                        open_fn, close_fn, spec.module, open_count, close_count
+                    ),
+                );
             }
         }
     }
@@ -2306,5 +2486,194 @@ protocol:
             "Expected Event constraint with Syntactic tier but got: {:?}",
             result.constraint_results
         );
+    }
+
+    // ── Balanced pairs and cross-module protocol tests ───────────────────
+
+    #[test]
+    fn test_balanced_pairs_static_imbalance() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+
+        // Code that calls open 2 times but close only once
+        let content = r#"
+pub fn init() {}
+pub fn open() {}
+pub fn close() {}
+pub fn process() {}
+
+pub fn main() {
+    open();
+    process();
+    open();
+    close();
+}
+"#;
+        std::fs::write(dir.path().join("src/sm.rs"), content).unwrap();
+
+        let spec = ModuleSpec {
+            module: "sm".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/sm.rs".to_string()),
+            protocol: Some(ProtocolSpec {
+                states: vec!["closed".into(), "opened".into()],
+                initial: "closed".into(),
+                terminal: vec!["closed".into()],
+                transitions: vec![
+                    Transition { from: "closed".into(), call: "open".into(), to: "opened".into() },
+                    Transition { from: "opened".into(), call: "close".into(), to: "closed".into() },
+                    Transition { from: "opened".into(), call: "process".into(), to: "opened".into() },
+                ],
+                balanced_pairs: vec![["open".into(), "close".into()]],
+            }),
+            ..Default::default()
+        };
+
+        let checker = SpecChecker::new(dir.path().to_path_buf());
+        let result = checker.check(&spec).unwrap();
+
+        assert!(
+            result.warnings.iter().any(|w| w.contains("mismatch") && w.contains("open")),
+            "Expected balanced pair mismatch warning but got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_balanced_pairs_static_balanced() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+
+        let content = r#"
+pub fn open() {}
+pub fn close() {}
+pub fn main() {
+    open();
+    close();
+}
+"#;
+        std::fs::write(dir.path().join("src/sm.rs"), content).unwrap();
+
+        let spec = ModuleSpec {
+            module: "sm".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/sm.rs".to_string()),
+            protocol: Some(ProtocolSpec {
+                states: vec!["closed".into(), "opened".into()],
+                initial: "closed".into(),
+                terminal: vec!["closed".into()],
+                transitions: vec![
+                    Transition { from: "closed".into(), call: "open".into(), to: "opened".into() },
+                    Transition { from: "opened".into(), call: "close".into(), to: "closed".into() },
+                ],
+                balanced_pairs: vec![["open".into(), "close".into()]],
+            }),
+            ..Default::default()
+        };
+
+        let checker = SpecChecker::new(dir.path().to_path_buf());
+        let result = checker.check(&spec).unwrap();
+
+        assert!(
+            !result.warnings.iter().any(|w| w.contains("mismatch") || w.contains("never called")),
+            "Balanced calls should not warn but got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_balanced_pairs_open_without_close() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+
+        let content = r#"
+pub fn acquire() {}
+pub fn release() {}
+pub fn main() {
+    acquire();
+    // oops, forgot release()
+}
+"#;
+        std::fs::write(dir.path().join("src/sm.rs"), content).unwrap();
+
+        let spec = ModuleSpec {
+            module: "sm".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/sm.rs".to_string()),
+            protocol: Some(ProtocolSpec {
+                states: vec!["free".into(), "held".into()],
+                initial: "free".into(),
+                terminal: vec!["free".into()],
+                transitions: vec![
+                    Transition { from: "free".into(), call: "acquire".into(), to: "held".into() },
+                    Transition { from: "held".into(), call: "release".into(), to: "free".into() },
+                ],
+                balanced_pairs: vec![["acquire".into(), "release".into()]],
+            }),
+            ..Default::default()
+        };
+
+        let checker = SpecChecker::new(dir.path().to_path_buf());
+        let result = checker.check(&spec).unwrap();
+
+        assert!(
+            result.warnings.iter().any(|w| w.contains("acquire") && w.contains("never called") && w.contains("release")),
+            "Expected warning about acquire without release but got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_cross_module_protocol_event_not_in_transitions() {
+        let consumer = ModuleSpec {
+            module: "handler".to_string(),
+            source_path: Some("src/handler.rs".to_string()),
+            depends_on: vec!["src/service.rs".to_string()],
+            subscribes: vec!["on_reset".to_string()],
+            ..Default::default()
+        };
+
+        let provider = ModuleSpec {
+            module: "service".to_string(),
+            source_path: Some("src/service.rs".to_string()),
+            emits: vec!["on_reset".to_string()],
+            protocol: Some(ProtocolSpec {
+                states: vec!["idle".into(), "running".into()],
+                initial: "idle".into(),
+                terminal: vec![],
+                transitions: vec![
+                    Transition { from: "idle".into(), call: "start".into(), to: "running".into() },
+                    Transition { from: "running".into(), call: "stop".into(), to: "idle".into() },
+                ],
+                balanced_pairs: vec![],
+            }),
+            ..Default::default()
+        };
+
+        let specs = vec![consumer, provider];
+        let checker = SpecChecker::new(std::path::PathBuf::from("/tmp")).with_specs(&specs);
+        let result = checker.check_composition(&specs);
+
+        assert!(
+            result.warnings.iter().any(|w| w.contains("on_reset") && w.contains("not a protocol transition")),
+            "Expected warning about event not in protocol transitions but got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_count_calls_helper() {
+        let source = r#"
+fn open() {} // definition, not a call
+fn main() {
+    open();
+    x.open();
+    close();
+    // open() in comment
+}
+"#;
+        assert_eq!(count_calls(source, "open"), 2); // bare call + method call
+        assert_eq!(count_calls(source, "close"), 1);
+        assert_eq!(count_calls(source, "missing"), 0);
     }
 }
