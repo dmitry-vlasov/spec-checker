@@ -7,6 +7,7 @@ mod behavioral;
 mod checker;
 mod extractors;
 mod rules;
+mod smt;
 mod spec;
 mod type_formula;
 mod types;

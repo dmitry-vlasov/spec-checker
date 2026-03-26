@@ -1,0 +1,66 @@
+# Spec Checker - SMT solver integration
+# Inherits: language=rust, context=core, stability=stable (root)
+
+module: smt
+source_path: src/smt.rs
+
+layer: infrastructure    # External tool integration
+
+exposes:
+  SmtQuery:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "has_field(Self, declarations)"
+      - "has_field(Self, assertions)"
+
+  SmtResult:
+    kind: type
+    type_constraints:
+      - "is_sum(Self)"
+      - "has_variant(Self, Sat)"
+      - "has_variant(Self, Unsat)"
+      - "has_variant(Self, Unknown)"
+      - "has_variant(Self, Error)"
+
+  SmtQuery.new:
+    kind: function
+    type_constraints:
+      - "equals(return, Self)"
+
+  SmtQuery.check_sat:
+    kind: function
+    type_constraints:
+      - "equals(return, SmtResult)"
+
+  solver_available:
+    kind: function
+    type_constraints:
+      - "equals(return, bool)"
+
+  check_state_ownership_consistency:
+    kind: function
+    type_constraints:
+      - "fallible(return)"
+
+  check_numeric_constraints:
+    kind: function
+    type_constraints:
+      - "equals(return, SmtResult)"
+
+  check_implication:
+    kind: function
+    type_constraints:
+      - "equals(return, SmtResult)"
+
+external_deps:
+  - sha2
+
+forbidden_deps:
+  - clap
+  - colored
+  - syn
+
+invariants:
+  - "Degrades gracefully when z3 is not installed"
+  - "No unsafe code"

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use crate::extractors::{get_extractor, ExtractedModule};
 use crate::rules::{self, Rule, RulesConfig, Severity as RuleSeverity};
+use crate::smt;
 use crate::spec::{LayerConfig, ModuleSpec};
 use crate::type_formula::{self, TypeEvalContext};
 
@@ -52,6 +53,8 @@ pub enum VerificationTier {
     RulesEngine,
     /// Decided by the type formula evaluator
     TypeFormula,
+    /// Decided by an SMT solver (z3) — formally verified
+    Smt,
 }
 
 impl std::fmt::Display for VerificationTier {
@@ -60,6 +63,7 @@ impl std::fmt::Display for VerificationTier {
             VerificationTier::Syntactic => write!(f, "syntactic"),
             VerificationTier::RulesEngine => write!(f, "rules-engine"),
             VerificationTier::TypeFormula => write!(f, "type-formula"),
+            VerificationTier::Smt => write!(f, "smt"),
         }
     }
 }
@@ -296,6 +300,9 @@ impl SpecChecker {
             }
         }
 
+        // 3. SMT-based state ownership consistency (when z3 is available)
+        self.check_state_ownership_smt(specs, &mut result);
+
         result
     }
 
@@ -459,6 +466,51 @@ impl SpecChecker {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// SMT-based state ownership consistency check across all modules.
+    ///
+    /// Uses z3 to verify that no state variable is owned by multiple modules.
+    /// If z3 is not available, this check is silently skipped (the syntactic
+    /// check in check_state_ownership_conflicts already covers this).
+    fn check_state_ownership_smt(
+        &self,
+        specs: &[ModuleSpec],
+        result: &mut CheckResult,
+    ) {
+        if !smt::solver_available() {
+            return; // Syntactic check already covers this
+        }
+
+        // Collect all ownership claims
+        let claims: Vec<(&str, &str)> = specs
+            .iter()
+            .flat_map(|s| {
+                s.owns_state
+                    .iter()
+                    .map(move |state| (s.module.as_str(), state.as_str()))
+            })
+            .collect();
+
+        if claims.is_empty() {
+            return;
+        }
+
+        match smt::check_state_ownership_consistency(&claims) {
+            Ok(()) => {
+                // All good — state ownership is consistent (SMT-verified)
+            }
+            Err(msg) if msg.contains("SMT-verified") => {
+                result.constraint_error(
+                    ConstraintKind::Architectural,
+                    VerificationTier::Smt,
+                    format!("Cross-module state ownership inconsistency: {}", msg),
+                );
+            }
+            Err(_) => {
+                // SMT solver error or timeout — skip, syntactic check covers it
             }
         }
     }
