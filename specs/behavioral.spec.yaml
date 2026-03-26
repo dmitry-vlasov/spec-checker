@@ -74,10 +74,10 @@ exposes:
   check_static_invariant:
     kind: function
     ensures:
-      - Checks "never panics" by scanning for panic/unwrap/expect
-      - Checks "no unsafe" by scanning for unsafe blocks
-      - Strips test modules before analysis
-      - Strips string literals to avoid false positives
+      - Returns Some result for invariants matching static patterns
+      - Returns None for unrecognized invariant text
+      - Delegates to check_no_panics, check_no_unwrap, check_no_unsafe
+      - Source code is pre-processed to strip test modules and string literals
 
   check_behavioral:
     kind: function
@@ -123,5 +123,5 @@ invariants:
   - "LLM results are always cached after first call"
   - "Cache keys are deterministic (SHA256 of code + invariant)"
   - "Static checks never call LLM"
-  - "LLM responses are clearly labeled as LLM-verified"
+  - "LLM results have tier field set to 'llm-verified'"
   - "No unsafe code"

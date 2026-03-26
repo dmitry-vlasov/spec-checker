@@ -544,7 +544,7 @@ async fn parse_llm_response(resp: reqwest::Response) -> anyhow::Result<Invariant
     Ok(InvariantResult {
         satisfies: llm_resp.satisfies,
         reasoning: llm_resp.reasoning,
-        tier: "behavioral".into(),
+        tier: "llm-verified".into(),
     })
 }
 
