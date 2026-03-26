@@ -34,11 +34,23 @@ pub struct InvariantResult {
     pub tier: String,
 }
 
-/// Classify an invariant into static or behavioral tier
+/// Classify an invariant into static or behavioral tier.
+///
+/// Only direct module-level assertions are classified as Static.
+/// Function-level ensures/requires (formatted as "func: ensures ...")
+/// are always Behavioral — they describe function behavior, not
+/// module-wide properties, even if they mention keywords like "panic".
 pub fn classify_invariant(text: &str) -> InvariantTier {
+    // Function-level requires/ensures are always behavioral:
+    // they describe what a function does, not a whole-module assertion.
+    // Format: "function_name: requires ..." or "function_name: ensures ..."
+    if text.contains(": requires ") || text.contains(": ensures ") {
+        return InvariantTier::Behavioral;
+    }
+
     let lower = text.to_lowercase();
 
-    // Static-checkable patterns
+    // Static-checkable patterns (module-level assertions only)
     if lower.contains("never panics") || lower.contains("no panic") {
         return InvariantTier::Static;
     }
