@@ -191,6 +191,47 @@ pub struct ModuleSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<String>,
 
+    /// Protocol specification: state machine describing valid call sequences
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<ProtocolSpec>,
+}
+
+// ─── Protocol Specification ──────────────────────────────────────────────────
+
+/// A protocol state machine: states + transitions describing valid call sequences.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtocolSpec {
+    /// Named states (e.g., ["init", "ready", "closed"])
+    #[serde(default)]
+    pub states: Vec<String>,
+
+    /// Initial state
+    pub initial: String,
+
+    /// Terminal states (optional; if empty, any state can be final)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub terminal: Vec<String>,
+
+    /// State transitions
+    #[serde(default)]
+    pub transitions: Vec<Transition>,
+
+    /// Balanced call pairs that must be matched (e.g., [["open", "close"]])
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub balanced_pairs: Vec<[String; 2]>,
+}
+
+/// A single protocol transition: calling a function moves from one state to another.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Transition {
+    /// Source state
+    pub from: String,
+
+    /// Function/method being called
+    pub call: String,
+
+    /// Target state
+    pub to: String,
 }
 
 /// Specification for an exposed entity (function, type, trait, etc.)
@@ -488,6 +529,7 @@ impl ModuleSpec {
             modifies: Vec::new(),
             callable_by: Vec::new(),
             roles: Vec::new(),
+            protocol: None,
         }
     }
 }

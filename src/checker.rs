@@ -26,6 +26,8 @@ pub enum ConstraintKind {
     Event,
     /// Type formula constraints (type-level properties via the DSL)
     TypeConstraint,
+    /// Protocol constraints (state machine / call sequence rules)
+    Protocol,
 }
 
 impl std::fmt::Display for ConstraintKind {
@@ -36,6 +38,7 @@ impl std::fmt::Display for ConstraintKind {
             ConstraintKind::Architectural => write!(f, "architectural"),
             ConstraintKind::Event => write!(f, "event"),
             ConstraintKind::TypeConstraint => write!(f, "type-constraint"),
+            ConstraintKind::Protocol => write!(f, "protocol"),
         }
     }
 }
@@ -250,6 +253,7 @@ impl SpecChecker {
         self.check_events(spec, &extracted, &mut result);
         self.check_type_constraints(spec, &extracted, &mut result);
         self.check_state_constraints(spec, &extracted, &mut result);
+        self.check_protocol(spec, &extracted, &mut result);
 
         Ok(result)
     }
@@ -397,6 +401,153 @@ impl SpecChecker {
                         format!(
                             "State ownership conflict: '{}' is owned by both '{}' and '{}'",
                             state_var, spec.module, other_spec.module
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Check protocol constraints: validate the state machine definition and
+    /// verify that all referenced functions exist in the implementation.
+    fn check_protocol(
+        &self,
+        spec: &ModuleSpec,
+        extracted: &ExtractedModule,
+        result: &mut CheckResult,
+    ) {
+        let protocol = match &spec.protocol {
+            Some(p) => p,
+            None => return,
+        };
+
+        // Validate: initial state must be in states list
+        if !protocol.states.is_empty() && !protocol.states.contains(&protocol.initial) {
+            result.constraint_error(
+                ConstraintKind::Protocol,
+                VerificationTier::Syntactic,
+                format!(
+                    "Protocol initial state '{}' is not in states list",
+                    protocol.initial
+                ),
+            );
+        }
+
+        // Validate: terminal states must be in states list
+        for terminal in &protocol.terminal {
+            if !protocol.states.is_empty() && !protocol.states.contains(terminal) {
+                result.constraint_error(
+                    ConstraintKind::Protocol,
+                    VerificationTier::Syntactic,
+                    format!(
+                        "Protocol terminal state '{}' is not in states list",
+                        terminal
+                    ),
+                );
+            }
+        }
+
+        // Validate transitions
+        let all_functions: Vec<&String> = extracted
+            .public_functions
+            .iter()
+            .chain(extracted.private_functions.iter())
+            .collect();
+
+        for transition in &protocol.transitions {
+            // from/to states must be in states list
+            if !protocol.states.is_empty() {
+                if !protocol.states.contains(&transition.from) {
+                    result.constraint_error(
+                        ConstraintKind::Protocol,
+                        VerificationTier::Syntactic,
+                        format!(
+                            "Protocol transition references unknown state '{}'",
+                            transition.from
+                        ),
+                    );
+                }
+                if !protocol.states.contains(&transition.to) {
+                    result.constraint_error(
+                        ConstraintKind::Protocol,
+                        VerificationTier::Syntactic,
+                        format!(
+                            "Protocol transition references unknown state '{}'",
+                            transition.to
+                        ),
+                    );
+                }
+            }
+
+            // The called function must exist in implementation
+            if !all_functions.iter().any(|f| **f == transition.call) {
+                result.constraint_error(
+                    ConstraintKind::Protocol,
+                    VerificationTier::Syntactic,
+                    format!(
+                        "Protocol transition references function '{}' not found in implementation",
+                        transition.call
+                    ),
+                );
+            }
+        }
+
+        // Validate balanced pairs: both functions must exist
+        for pair in &protocol.balanced_pairs {
+            for func in pair {
+                if !all_functions.iter().any(|f| **f == *func) {
+                    result.constraint_error(
+                        ConstraintKind::Protocol,
+                        VerificationTier::Syntactic,
+                        format!(
+                            "Balanced pair references function '{}' not found in implementation",
+                            func
+                        ),
+                    );
+                }
+            }
+        }
+
+        // Check for unreachable states: every non-initial state must be
+        // reachable as a 'to' target of some transition
+        if !protocol.states.is_empty() {
+            let reachable_states: std::collections::HashSet<&String> = protocol
+                .transitions
+                .iter()
+                .map(|t| &t.to)
+                .chain(std::iter::once(&protocol.initial))
+                .collect();
+
+            for state in &protocol.states {
+                if !reachable_states.contains(state) {
+                    result.constraint_warning(
+                        ConstraintKind::Protocol,
+                        VerificationTier::Syntactic,
+                        format!(
+                            "Protocol state '{}' is unreachable (no transition leads to it)",
+                            state
+                        ),
+                    );
+                }
+            }
+        }
+
+        // Check for dead-end non-terminal states: every non-terminal state
+        // should have at least one outgoing transition
+        if !protocol.states.is_empty() {
+            let states_with_outgoing: std::collections::HashSet<&String> =
+                protocol.transitions.iter().map(|t| &t.from).collect();
+
+            for state in &protocol.states {
+                if !protocol.terminal.contains(state)
+                    && !states_with_outgoing.contains(state)
+                {
+                    result.constraint_warning(
+                        ConstraintKind::Protocol,
+                        VerificationTier::Syntactic,
+                        format!(
+                            "Protocol state '{}' is a dead end (no outgoing transitions and not terminal)",
+                            state
                         ),
                     );
                 }
@@ -780,7 +931,7 @@ impl SpecChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spec::{ExposeSpec, Layer, Stability};
+    use crate::spec::{ExposeSpec, Layer, ProtocolSpec, Stability, Transition};
     use std::collections::HashMap;
     use tempfile::TempDir;
 
@@ -1463,5 +1614,269 @@ contract Bridge {
             result.constraint_results.iter().any(|cr| cr.tier == VerificationTier::Syntactic),
             "Expected a Syntactic tier result"
         );
+    }
+
+    // ── Protocol constraint tests ────────────────────────────────────────
+
+    fn make_protocol_spec(protocol: ProtocolSpec) -> ModuleSpec {
+        ModuleSpec {
+            module: "StateMachine".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/sm.rs".to_string()),
+            protocol: Some(protocol),
+            ..Default::default()
+        }
+    }
+
+    fn write_rust_with_fns(dir: &TempDir, fns: &[&str]) {
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        let content: String = fns
+            .iter()
+            .map(|f| format!("pub fn {}() {{}}\n", f))
+            .collect();
+        std::fs::write(dir.path().join("src/sm.rs"), content).unwrap();
+    }
+
+    #[test]
+    fn test_protocol_valid() {
+        let dir = TempDir::new().unwrap();
+        write_rust_with_fns(&dir, &["initialize", "process", "close"]);
+
+        let spec = make_protocol_spec(ProtocolSpec {
+            states: vec!["init".into(), "ready".into(), "closed".into()],
+            initial: "init".into(),
+            terminal: vec!["closed".into()],
+            transitions: vec![
+                Transition { from: "init".into(), call: "initialize".into(), to: "ready".into() },
+                Transition { from: "ready".into(), call: "process".into(), to: "ready".into() },
+                Transition { from: "ready".into(), call: "close".into(), to: "closed".into() },
+            ],
+            balanced_pairs: vec![],
+        });
+
+        let checker = SpecChecker::new(dir.path().to_path_buf());
+        let result = checker.check(&spec).unwrap();
+
+        assert!(
+            result.is_ok(),
+            "Valid protocol should pass but got: {:?}",
+            result.errors
+        );
+        // No warnings about unreachable/dead-end states
+        assert!(
+            !result.warnings.iter().any(|w| w.contains("unreachable") || w.contains("dead end")),
+            "No protocol warnings expected but got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_protocol_initial_state_invalid() {
+        let dir = TempDir::new().unwrap();
+        write_rust_with_fns(&dir, &["start"]);
+
+        let spec = make_protocol_spec(ProtocolSpec {
+            states: vec!["ready".into()],
+            initial: "nonexistent".into(),
+            terminal: vec![],
+            transitions: vec![
+                Transition { from: "ready".into(), call: "start".into(), to: "ready".into() },
+            ],
+            balanced_pairs: vec![],
+        });
+
+        let checker = SpecChecker::new(dir.path().to_path_buf());
+        let result = checker.check(&spec).unwrap();
+
+        assert!(
+            result.errors.iter().any(|e| e.contains("initial state") && e.contains("nonexistent")),
+            "Expected error about invalid initial state but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_protocol_unknown_state_in_transition() {
+        let dir = TempDir::new().unwrap();
+        write_rust_with_fns(&dir, &["go"]);
+
+        let spec = make_protocol_spec(ProtocolSpec {
+            states: vec!["init".into(), "ready".into()],
+            initial: "init".into(),
+            terminal: vec![],
+            transitions: vec![
+                Transition { from: "init".into(), call: "go".into(), to: "phantom".into() },
+            ],
+            balanced_pairs: vec![],
+        });
+
+        let checker = SpecChecker::new(dir.path().to_path_buf());
+        let result = checker.check(&spec).unwrap();
+
+        assert!(
+            result.errors.iter().any(|e| e.contains("unknown state") && e.contains("phantom")),
+            "Expected error about unknown state 'phantom' but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_protocol_missing_function() {
+        let dir = TempDir::new().unwrap();
+        write_rust_with_fns(&dir, &["initialize"]);
+
+        let spec = make_protocol_spec(ProtocolSpec {
+            states: vec!["init".into(), "ready".into()],
+            initial: "init".into(),
+            terminal: vec![],
+            transitions: vec![
+                Transition { from: "init".into(), call: "initialize".into(), to: "ready".into() },
+                Transition { from: "ready".into(), call: "missing_fn".into(), to: "ready".into() },
+            ],
+            balanced_pairs: vec![],
+        });
+
+        let checker = SpecChecker::new(dir.path().to_path_buf());
+        let result = checker.check(&spec).unwrap();
+
+        assert!(
+            result.errors.iter().any(|e| e.contains("missing_fn") && e.contains("not found")),
+            "Expected error about missing function but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_protocol_unreachable_state() {
+        let dir = TempDir::new().unwrap();
+        write_rust_with_fns(&dir, &["go"]);
+
+        let spec = make_protocol_spec(ProtocolSpec {
+            states: vec!["init".into(), "ready".into(), "orphan".into()],
+            initial: "init".into(),
+            terminal: vec![],
+            transitions: vec![
+                Transition { from: "init".into(), call: "go".into(), to: "ready".into() },
+            ],
+            balanced_pairs: vec![],
+        });
+
+        let checker = SpecChecker::new(dir.path().to_path_buf());
+        let result = checker.check(&spec).unwrap();
+
+        assert!(
+            result.warnings.iter().any(|w| w.contains("orphan") && w.contains("unreachable")),
+            "Expected warning about unreachable state 'orphan' but got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_protocol_dead_end_state() {
+        let dir = TempDir::new().unwrap();
+        write_rust_with_fns(&dir, &["go"]);
+
+        let spec = make_protocol_spec(ProtocolSpec {
+            states: vec!["init".into(), "stuck".into()],
+            initial: "init".into(),
+            terminal: vec![], // stuck is NOT terminal
+            transitions: vec![
+                Transition { from: "init".into(), call: "go".into(), to: "stuck".into() },
+            ],
+            balanced_pairs: vec![],
+        });
+
+        let checker = SpecChecker::new(dir.path().to_path_buf());
+        let result = checker.check(&spec).unwrap();
+
+        assert!(
+            result.warnings.iter().any(|w| w.contains("stuck") && w.contains("dead end")),
+            "Expected warning about dead-end state 'stuck' but got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_protocol_balanced_pairs_valid() {
+        let dir = TempDir::new().unwrap();
+        write_rust_with_fns(&dir, &["open", "close", "process"]);
+
+        let spec = make_protocol_spec(ProtocolSpec {
+            states: vec!["init".into(), "opened".into(), "closed".into()],
+            initial: "init".into(),
+            terminal: vec!["closed".into()],
+            transitions: vec![
+                Transition { from: "init".into(), call: "open".into(), to: "opened".into() },
+                Transition { from: "opened".into(), call: "process".into(), to: "opened".into() },
+                Transition { from: "opened".into(), call: "close".into(), to: "closed".into() },
+            ],
+            balanced_pairs: vec![["open".into(), "close".into()]],
+        });
+
+        let checker = SpecChecker::new(dir.path().to_path_buf());
+        let result = checker.check(&spec).unwrap();
+
+        assert!(
+            result.is_ok(),
+            "Valid protocol with balanced pairs should pass but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_protocol_balanced_pairs_missing_fn() {
+        let dir = TempDir::new().unwrap();
+        write_rust_with_fns(&dir, &["acquire"]);
+
+        let spec = make_protocol_spec(ProtocolSpec {
+            states: vec!["init".into()],
+            initial: "init".into(),
+            terminal: vec![],
+            transitions: vec![],
+            balanced_pairs: vec![["acquire".into(), "release".into()]],
+        });
+
+        let checker = SpecChecker::new(dir.path().to_path_buf());
+        let result = checker.check(&spec).unwrap();
+
+        assert!(
+            result.errors.iter().any(|e| e.contains("release") && e.contains("Balanced pair")),
+            "Expected error about missing balanced pair function but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_protocol_yaml_deserialization() {
+        let yaml = r#"
+module: Connection
+language: rust
+source_path: src/conn.rs
+protocol:
+  states: [disconnected, connected, closed]
+  initial: disconnected
+  terminal: [closed]
+  transitions:
+    - from: disconnected
+      call: connect
+      to: connected
+    - from: connected
+      call: send
+      to: connected
+    - from: connected
+      call: disconnect
+      to: closed
+  balanced_pairs:
+    - [connect, disconnect]
+"#;
+        let spec: ModuleSpec = serde_yaml::from_str(yaml).unwrap();
+
+        let protocol = spec.protocol.as_ref().unwrap();
+        assert_eq!(protocol.states.len(), 3);
+        assert_eq!(protocol.initial, "disconnected");
+        assert_eq!(protocol.terminal, vec!["closed"]);
+        assert_eq!(protocol.transitions.len(), 3);
+        assert_eq!(protocol.balanced_pairs.len(), 1);
+        assert_eq!(protocol.balanced_pairs[0], ["connect", "disconnect"]);
     }
 }

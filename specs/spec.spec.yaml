@@ -65,6 +65,28 @@ exposes:
       - "is_product(Self)"
       - "cloneable"
 
+  ProtocolSpec:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "serializable"
+      - "cloneable"
+      - "has_field(Self, states)"
+      - "has_field(Self, initial)"
+      - "has_field(Self, terminal)"
+      - "has_field(Self, transitions)"
+      - "has_field(Self, balanced_pairs)"
+
+  Transition:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "serializable"
+      - "cloneable"
+      - "has_field(Self, from)"
+      - "has_field(Self, call)"
+      - "has_field(Self, to)"
+
   ModuleSpec.from_extracted:
     kind: function
     type_constraints:

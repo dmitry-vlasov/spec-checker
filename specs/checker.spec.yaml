@@ -7,12 +7,41 @@ source_path: src/checker.rs
 layer: application       # Orchestrates domain + infrastructure
 
 exposes:
+  ConstraintKind:
+    kind: type
+    type_constraints:
+      - "is_sum(Self)"
+      - "has_variant(Self, Structural)"
+      - "has_variant(Self, Dependency)"
+      - "has_variant(Self, Architectural)"
+      - "has_variant(Self, Event)"
+      - "has_variant(Self, TypeConstraint)"
+      - "has_variant(Self, Protocol)"
+
+  VerificationTier:
+    kind: type
+    type_constraints:
+      - "is_sum(Self)"
+      - "has_variant(Self, Syntactic)"
+      - "has_variant(Self, RulesEngine)"
+      - "has_variant(Self, TypeFormula)"
+
+  ConstraintResult:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "has_field(Self, kind)"
+      - "has_field(Self, tier)"
+      - "has_field(Self, severity)"
+      - "has_field(Self, message)"
+
   CheckResult:
     kind: type
     type_constraints:
       - "is_product(Self)"
       - "has_field(Self, errors)"
       - "has_field(Self, warnings)"
+      - "has_field(Self, constraint_results)"
       - "equals(con(field(errors)), Vec)"
       - "equals(con(field(warnings)), Vec)"
 
