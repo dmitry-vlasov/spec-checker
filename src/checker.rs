@@ -249,6 +249,7 @@ impl SpecChecker {
         self.check_architectural_constraints(spec, &mut result);
         self.check_events(spec, &extracted, &mut result);
         self.check_type_constraints(spec, &extracted, &mut result);
+        self.check_state_constraints(spec, &extracted, &mut result);
 
         Ok(result)
     }
@@ -284,6 +285,118 @@ impl SpecChecker {
                         format!(
                             "Event '{}' is defined in implementation but not in emits spec",
                             event
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Check state-related constraints: owns_state, reads_state, modifies
+    fn check_state_constraints(
+        &self,
+        spec: &ModuleSpec,
+        extracted: &ExtractedModule,
+        result: &mut CheckResult,
+    ) {
+        // Check owns_state: each listed state variable must exist in this module
+        for state_var in &spec.owns_state {
+            if !extracted.state_variables.contains(state_var) {
+                result.constraint_error(
+                    ConstraintKind::Structural,
+                    VerificationTier::Syntactic,
+                    format!(
+                        "State variable '{}' is listed in owns_state but not found in implementation",
+                        state_var
+                    ),
+                );
+            }
+        }
+
+        // Check for state variables in implementation not listed in owns_state
+        if !spec.owns_state.is_empty() {
+            for state_var in &extracted.state_variables {
+                if !spec.owns_state.contains(state_var) {
+                    result.constraint_warning(
+                        ConstraintKind::Structural,
+                        VerificationTier::Syntactic,
+                        format!(
+                            "State variable '{}' exists in implementation but not listed in owns_state",
+                            state_var
+                        ),
+                    );
+                }
+            }
+        }
+
+        // Check reads_state: referenced state must exist in some other module's owns_state
+        for state_ref in &spec.reads_state {
+            if !self.state_exists_in_other_module(state_ref, spec) {
+                result.constraint_warning(
+                    ConstraintKind::Dependency,
+                    VerificationTier::Syntactic,
+                    format!(
+                        "reads_state '{}' not found in any other module's owns_state",
+                        state_ref
+                    ),
+                );
+            }
+        }
+
+        // Check modifies: referenced state must exist in some other module's owns_state
+        for state_ref in &spec.modifies {
+            if !self.state_exists_in_other_module(state_ref, spec) {
+                result.constraint_warning(
+                    ConstraintKind::Dependency,
+                    VerificationTier::Syntactic,
+                    format!(
+                        "modifies '{}' not found in any other module's owns_state",
+                        state_ref
+                    ),
+                );
+            }
+        }
+
+        // Cross-module: check for state ownership conflicts
+        self.check_state_ownership_conflicts(spec, result);
+    }
+
+    /// Check if a state variable is owned by some module other than the given one
+    fn state_exists_in_other_module(&self, state_var: &str, current_spec: &ModuleSpec) -> bool {
+        // If no other specs are loaded, skip the check
+        if self.spec_map.is_empty() {
+            return true;
+        }
+        for (_, other_spec) in &self.spec_map {
+            if other_spec.module == current_spec.module {
+                continue;
+            }
+            if other_spec.owns_state.contains(&state_var.to_string()) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Detect cross-module state ownership conflicts:
+    /// if two modules both claim to own the same state variable, that's an error.
+    fn check_state_ownership_conflicts(
+        &self,
+        spec: &ModuleSpec,
+        result: &mut CheckResult,
+    ) {
+        for state_var in &spec.owns_state {
+            for (_, other_spec) in &self.spec_map {
+                if other_spec.module == spec.module {
+                    continue;
+                }
+                if other_spec.owns_state.contains(state_var) {
+                    result.constraint_error(
+                        ConstraintKind::Architectural,
+                        VerificationTier::Syntactic,
+                        format!(
+                            "State ownership conflict: '{}' is owned by both '{}' and '{}'",
+                            state_var, spec.module, other_spec.module
                         ),
                     );
                 }
@@ -1084,6 +1197,271 @@ contract Bridge {
             result.is_ok(),
             "Volatile depending on stable should be allowed but got: {:?}",
             result.errors
+        );
+    }
+
+    #[test]
+    fn test_check_owns_state_missing() {
+        let dir = TempDir::new().unwrap();
+
+        // Solidity contract with one state variable
+        let content = r#"
+contract Bridge {
+    uint256 public deposited;
+    function deposit() public {}
+}
+"#;
+        std::fs::write(dir.path().join("Bridge.sol"), content).unwrap();
+
+        // Spec claims two state variables, but only one exists
+        let spec = ModuleSpec {
+            module: "Bridge".to_string(),
+            language: Some("solidity".to_string()),
+            source_path: Some("Bridge.sol".to_string()),
+            owns_state: vec!["deposited".to_string(), "withdrawn".to_string()],
+            ..Default::default()
+        };
+
+        let checker = SpecChecker::new(dir.path().to_path_buf());
+        let result = checker.check(&spec).unwrap();
+
+        assert!(!result.is_ok(), "Expected error for missing state variable");
+        assert!(
+            result.errors.iter().any(|e| e.contains("withdrawn") && e.contains("owns_state")),
+            "Expected error about 'withdrawn' in owns_state but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_check_owns_state_extra() {
+        let dir = TempDir::new().unwrap();
+
+        // Solidity contract with two state variables
+        let content = r#"
+contract Bridge {
+    uint256 public deposited;
+    uint256 public withdrawn;
+    function deposit() public {}
+}
+"#;
+        std::fs::write(dir.path().join("Bridge.sol"), content).unwrap();
+
+        // Spec only lists one
+        let spec = ModuleSpec {
+            module: "Bridge".to_string(),
+            language: Some("solidity".to_string()),
+            source_path: Some("Bridge.sol".to_string()),
+            owns_state: vec!["deposited".to_string()],
+            ..Default::default()
+        };
+
+        let checker = SpecChecker::new(dir.path().to_path_buf());
+        let result = checker.check(&spec).unwrap();
+
+        assert!(
+            result.warnings.iter().any(|w| w.contains("withdrawn") && w.contains("owns_state")),
+            "Expected warning about 'withdrawn' not in owns_state but got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_check_state_ownership_conflict() {
+        let dir = TempDir::new().unwrap();
+
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(
+            dir.path().join("src/bridge.rs"),
+            "pub static BALANCES: () = ();\npub fn deposit() {}",
+        ).unwrap();
+        std::fs::write(
+            dir.path().join("src/vault.rs"),
+            "pub static BALANCES: () = ();\npub fn withdraw() {}",
+        ).unwrap();
+
+        // Both modules claim to own BALANCES
+        let bridge_spec = ModuleSpec {
+            module: "bridge".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/bridge.rs".to_string()),
+            owns_state: vec!["BALANCES".to_string()],
+            ..Default::default()
+        };
+
+        let vault_spec = ModuleSpec {
+            module: "vault".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/vault.rs".to_string()),
+            owns_state: vec!["BALANCES".to_string()],
+            ..Default::default()
+        };
+
+        let specs = vec![bridge_spec.clone(), vault_spec];
+        let checker = SpecChecker::new(dir.path().to_path_buf()).with_specs(&specs);
+
+        let result = checker.check(&bridge_spec).unwrap();
+
+        assert!(
+            !result.is_ok(),
+            "Expected state ownership conflict error"
+        );
+        assert!(
+            result.errors.iter().any(|e| e.contains("BALANCES") && e.contains("ownership conflict")),
+            "Expected ownership conflict error about BALANCES but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_check_reads_state_valid() {
+        let dir = TempDir::new().unwrap();
+
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/reader.rs"), "pub fn read_data() {}").unwrap();
+        std::fs::write(
+            dir.path().join("src/owner.rs"),
+            "pub static DATA: () = ();\npub fn write_data() {}",
+        ).unwrap();
+
+        let reader_spec = ModuleSpec {
+            module: "reader".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/reader.rs".to_string()),
+            reads_state: vec!["DATA".to_string()],
+            ..Default::default()
+        };
+
+        let owner_spec = ModuleSpec {
+            module: "owner".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/owner.rs".to_string()),
+            owns_state: vec!["DATA".to_string()],
+            ..Default::default()
+        };
+
+        let specs = vec![reader_spec.clone(), owner_spec];
+        let checker = SpecChecker::new(dir.path().to_path_buf()).with_specs(&specs);
+
+        let result = checker.check(&reader_spec).unwrap();
+
+        // No warning about reads_state because DATA exists in owner's owns_state
+        assert!(
+            !result.warnings.iter().any(|w| w.contains("reads_state") && w.contains("DATA")),
+            "Should not warn about DATA in reads_state when owner exists, but got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_check_reads_state_orphan() {
+        let dir = TempDir::new().unwrap();
+
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/reader.rs"), "pub fn read_data() {}").unwrap();
+        std::fs::write(dir.path().join("src/other.rs"), "pub fn other() {}").unwrap();
+
+        // reader reads DATA, but no module owns it
+        let reader_spec = ModuleSpec {
+            module: "reader".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/reader.rs".to_string()),
+            reads_state: vec!["DATA".to_string()],
+            ..Default::default()
+        };
+
+        let other_spec = ModuleSpec {
+            module: "other".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/other.rs".to_string()),
+            ..Default::default()
+        };
+
+        let specs = vec![reader_spec.clone(), other_spec];
+        let checker = SpecChecker::new(dir.path().to_path_buf()).with_specs(&specs);
+
+        let result = checker.check(&reader_spec).unwrap();
+
+        assert!(
+            result.warnings.iter().any(|w| w.contains("reads_state") && w.contains("DATA")),
+            "Expected warning about orphan reads_state DATA but got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_check_modifies_orphan() {
+        let dir = TempDir::new().unwrap();
+
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/writer.rs"), "pub fn write_data() {}").unwrap();
+        std::fs::write(dir.path().join("src/other.rs"), "pub fn other() {}").unwrap();
+
+        let writer_spec = ModuleSpec {
+            module: "writer".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/writer.rs".to_string()),
+            modifies: vec!["COUNTER".to_string()],
+            ..Default::default()
+        };
+
+        let other_spec = ModuleSpec {
+            module: "other".to_string(),
+            language: Some("rust".to_string()),
+            source_path: Some("src/other.rs".to_string()),
+            ..Default::default()
+        };
+
+        let specs = vec![writer_spec.clone(), other_spec];
+        let checker = SpecChecker::new(dir.path().to_path_buf()).with_specs(&specs);
+
+        let result = checker.check(&writer_spec).unwrap();
+
+        assert!(
+            result.warnings.iter().any(|w| w.contains("modifies") && w.contains("COUNTER")),
+            "Expected warning about orphan modifies COUNTER but got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_check_constraint_results_populated() {
+        let dir = TempDir::new().unwrap();
+
+        let content = r#"
+contract Bridge {
+    function deposit(address token, uint256 amount) public {}
+}
+"#;
+        std::fs::write(dir.path().join("Bridge.sol"), content).unwrap();
+
+        let mut exposes = HashMap::new();
+        exposes.insert("deposit".to_string(), ExposeSpec::default());
+        exposes.insert("missing_fn".to_string(), ExposeSpec::default());
+
+        let spec = ModuleSpec {
+            module: "Bridge".to_string(),
+            language: Some("solidity".to_string()),
+            source_path: Some("Bridge.sol".to_string()),
+            exposes,
+            ..Default::default()
+        };
+
+        let checker = SpecChecker::new(dir.path().to_path_buf());
+        let result = checker.check(&spec).unwrap();
+
+        // Should have at least one constraint result for the missing function
+        assert!(
+            !result.constraint_results.is_empty(),
+            "Expected constraint_results to be populated"
+        );
+        assert!(
+            result.constraint_results.iter().any(|cr| cr.kind == ConstraintKind::Structural),
+            "Expected a Structural constraint result"
+        );
+        assert!(
+            result.constraint_results.iter().any(|cr| cr.tier == VerificationTier::Syntactic),
+            "Expected a Syntactic tier result"
         );
     }
 }
