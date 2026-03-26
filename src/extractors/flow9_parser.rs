@@ -2,7 +2,7 @@
 ///
 /// Expects input with comments already stripped.
 
-use crate::flow9_ast::*;
+use super::flow9_ast::*;
 
 pub fn parse_flow9_source(input: &str) -> Result<Flow9Module, String> {
     let mut parser = Parser::new(input);

@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use super::{ExtractedModule, Extractor};
-use crate::flow9_ast::{ArgType, Decl, Flow9Type, FunArg};
-use crate::flow9_parser;
+use super::flow9_ast::{ArgType, Decl, Flow9Type, FunArg};
+use super::flow9_parser;
 use crate::types::{
     FieldInfo, FunctionInfo, ParamInfo, TypeInfo, TypeKind, TypeRepr, VariantInfo,
     Visibility as TypeVisibility,

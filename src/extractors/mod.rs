@@ -1,4 +1,6 @@
 mod flow9;
+pub(crate) mod flow9_ast;
+pub(crate) mod flow9_parser;
 mod rust;
 mod solidity;
 
