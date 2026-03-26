@@ -399,6 +399,15 @@ struct LlmFileConfig {
     api_key: Option<String>,
     #[serde(default)]
     check: Option<String>,
+    /// Local LLM for dry-run preview checks
+    #[serde(default)]
+    local: Option<LocalLlmFileConfig>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct LocalLlmFileConfig {
+    endpoint: String,
+    model: String,
 }
 
 /// Load and resolve LlmConfig from: defaults → config file → env vars → CLI flags.
@@ -428,6 +437,14 @@ fn load_llm_config(
         if let Ok(mode) = check.parse() {
             config.check_mode = mode;
         }
+    }
+
+    // 2b. Apply local LLM config
+    if let Some(local) = file_config.llm.local {
+        config.local = Some(behavioral::LocalLlmConfig {
+            endpoint: local.endpoint,
+            model: local.model,
+        });
     }
 
     // 3. CLI flags override everything

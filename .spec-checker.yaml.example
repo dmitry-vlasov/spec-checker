@@ -1,0 +1,23 @@
+# Spec-checker configuration
+# Copy to .spec-checker.yaml and adjust for your setup.
+
+llm:
+  # Primary LLM for full verification (cloud API recommended)
+  endpoint: https://api.anthropic.com
+  model: claude-haiku-4-5-20251001
+  # api_key: sk-ant-...         # or set ANTHROPIC_API_KEY env var
+  check: off                     # off | dry-run | cached-only | full
+
+  # Local LLM for dry-run preview checks (optional)
+  # When configured, dry-run mode calls the local LLM instead of
+  # just printing token estimates. Results are cached — subsequent
+  # runs with cached-only or full will use these cached results.
+  #
+  # Recommended: qwen3.5:9b (best reasoning) or qwen2.5-coder:7b
+  # Requires: ollama serve running locally
+  #
+  # local:
+  #   endpoint: http://localhost:11434/v1
+  #   model: qwen3.5:9b
+
+# rules: rules.yaml             # custom rules file

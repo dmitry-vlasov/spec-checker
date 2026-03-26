@@ -440,10 +440,18 @@ llm:
   api_key: sk-ant-...          # optional, can use ANTHROPIC_API_KEY env var
   check: off                    # default mode: off | dry-run | cached-only | full
 
-  # Or use a local LLM (Ollama, vLLM, LM Studio, etc.)
+  # Or use a local LLM as primary (Ollama, vLLM, LM Studio, etc.)
   # endpoint: http://localhost:11434/v1
-  # model: llama3.1
+  # model: qwen3.5:9b
   # check: full
+
+  # Hybrid mode: local LLM for dry-run previews, cloud for full verification
+  # When 'local' is configured and 'check: dry-run', the local LLM runs
+  # the checks instead of just printing token estimates. Results are cached,
+  # so subsequent 'cached-only' runs use them instantly.
+  local:
+    endpoint: http://localhost:11434/v1
+    model: qwen3.5:9b
 
 rules: rules.yaml              # default rules file
 ```
@@ -454,9 +462,9 @@ rules: rules.yaml              # default rules file
 3. Environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `LLM_API_KEY`)
 4. CLI flags (`--llm-endpoint`, `--llm-model`, `--llm-check`, `--llm-api-key`)
 
-The provider is auto-detected from the endpoint URL: `anthropic.com` uses the Anthropic API format, everything else uses the OpenAI-compatible format (works with Ollama, vLLM, LM Studio, LocalAI, llama.cpp server, etc.).
+**Provider auto-detection**: `anthropic.com` in URL → Anthropic API format; everything else → OpenAI-compatible format (Ollama, vLLM, LM Studio, LocalAI, llama.cpp server, etc.). For local LLMs, the API key is optional.
 
-For local LLMs, the API key is optional — most local servers don't require one.
+**Hybrid mode**: Configure a `local` section under `llm` to use a local LLM for `dry-run` preview checks. This gives fast, free previews before committing to cloud API costs. Recommended local models: `qwen3.5:9b` (best reasoning) or `qwen2.5-coder:7b` (code-focused).
 
 ## Usage
 
