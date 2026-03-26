@@ -14,12 +14,25 @@ exposes:
       - "serializable"
       - "cloneable"
       - "has_field(Self, module)"
+      - "has_field(Self, language)"
+      - "has_field(Self, source_path)"
       - "has_field(Self, exposes)"
       - "has_field(Self, depends_on)"
       - "has_field(Self, forbidden_deps)"
+      - "has_field(Self, external_deps)"
+      - "has_field(Self, forbidden_external)"
       - "has_field(Self, layer)"
       - "has_field(Self, context)"
       - "has_field(Self, stability)"
+      - "has_field(Self, invariants)"
+      - "has_field(Self, emits)"
+      - "has_field(Self, subscribes)"
+      - "has_field(Self, owns_state)"
+      - "has_field(Self, reads_state)"
+      - "has_field(Self, modifies)"
+      - "has_field(Self, callable_by)"
+      - "has_field(Self, roles)"
+      - "has_field(Self, protocol)"
 
   ExposeSpec:
     kind: type
@@ -31,6 +44,10 @@ exposes:
       - "has_field(Self, type_constraints)"
       - "has_field(Self, requires)"
       - "has_field(Self, ensures)"
+      - "has_field(Self, modifies)"
+      - "has_field(Self, emits)"
+      - "has_field(Self, callable_by)"
+      - "has_field(Self, visibility)"
 
   SpecDefaults:
     kind: type
@@ -40,8 +57,11 @@ exposes:
       - "cloneable"
       - "has_field(Self, language)"
       - "has_field(Self, layer)"
+      - "has_field(Self, context)"
       - "has_field(Self, stability)"
       - "has_field(Self, forbidden_deps)"
+      - "has_field(Self, external_deps)"
+      - "has_field(Self, forbidden_external)"
 
   Layer:
     kind: type
@@ -64,6 +84,7 @@ exposes:
     type_constraints:
       - "is_product(Self)"
       - "cloneable"
+      - "has_field(Self, allowed_deps)"
 
   ProtocolSpec:
     kind: type
@@ -87,6 +108,27 @@ exposes:
       - "has_field(Self, call)"
       - "has_field(Self, to)"
 
+  SubsystemSpec:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "serializable"
+      - "has_field(Self, subsystem)"
+      - "has_field(Self, modules)"
+      - "has_field(Self, exposes)"
+      - "has_field(Self, invariants)"
+      - "has_field(Self, depends_on)"
+      - "has_field(Self, forbidden_deps)"
+
+  SubsystemExposeSpec:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "serializable"
+      - "has_field(Self, delegates_to)"
+      - "has_field(Self, requires)"
+      - "has_field(Self, ensures)"
+
   ModuleSpec.from_extracted:
     kind: function
     type_constraints:
@@ -94,12 +136,17 @@ exposes:
       - "equals(return, Self)"
     ensures:
       - Creates ModuleSpec from extracted implementation
-      - Populates exposes from public_functions
-      - Populates internal from private_functions
+      - Populates exposes from public_functions and type_definitions
       - Populates emits from events
+      - Populates owns_state from state_variables
+      - Detects protocol patterns from function names
 
   ModuleSpec.apply_defaults:
     kind: function
+    ensures:
+      - Fills in missing scalar fields from defaults
+      - Merges list fields (union) from defaults
+      - Never overwrites explicitly set fields
 
   SpecDefaults.merge:
     kind: function
@@ -125,11 +172,28 @@ exposes:
     ensures:
       - Returns 4-layer model (infrastructure/domain/application/interface)
 
+  LayerConfig.from_linear:
+    kind: function
+    type_constraints:
+      - "equals(return, Self)"
+    ensures:
+      - Each layer can depend on all layers below it
+
+  LayerConfig.from_dag:
+    kind: function
+    type_constraints:
+      - "equals(return, Self)"
+    ensures:
+      - Each layer lists its allowed dependencies explicitly
+
   LayerConfig.can_depend_on:
     kind: function
     type_constraints:
       - "equals(param(0), Self)"
       - "equals(return, bool)"
+    ensures:
+      - Same layer always returns true
+      - Unknown layers allowed by default
 
   Stability.can_depend_on:
     kind: function
@@ -169,3 +233,5 @@ invariants:
   - "Normal cannot depend on Volatile"
   - "apply_defaults never overwrites explicitly set fields"
   - "List fields merge (union), scalar fields override"
+  - "No unsafe code"
+  - "detect_protocol returns None when no patterns found"

@@ -9,16 +9,34 @@ modules:
   - src/types.rs
   - src/rules.rs
   - src/smt.rs
+  - src/behavioral.rs
 
 exposes:
   check:
     delegates_to: checker.SpecChecker.check
+    requires:
+      - source file exists
+      - language extractor available
+    ensures:
+      - All constraint kinds checked
+      - Results tagged with kind and tier
   check_composition:
     delegates_to: checker.SpecChecker.check_composition
+    ensures:
+      - Event matching across modules
+      - Contract compatibility at boundaries
+      - SMT state ownership when z3 available
+  check_subsystem:
+    delegates_to: checker.SpecChecker.check_subsystem
+    ensures:
+      - Module membership validation
+      - Interface delegation verification
 
 invariants:
   - "All constraint kinds share the same verification cascade"
   - "Composition checking is independent of per-module checking"
+  - "SMT checks are optional — system works without z3"
+  - "No module in this subsystem depends on CLI (clap/colored)"
 
 forbidden_deps:
   - clap

@@ -19,11 +19,14 @@ exposes:
       - "cloneable"
       - "has_field(Self, name)"
       - "has_field(Self, language)"
+      - "has_field(Self, source_path)"
       - "has_field(Self, public_functions)"
       - "has_field(Self, private_functions)"
       - "has_field(Self, function_signatures)"
       - "has_field(Self, imports)"
       - "has_field(Self, events)"
+      - "has_field(Self, state_variables)"
+      - "has_field(Self, modifiers)"
       - "has_field(Self, type_definitions)"
       - "has_field(Self, function_info)"
 
@@ -33,10 +36,11 @@ exposes:
       - "equals(param(language), str)"
       - "fallible(return)"
     requires:
-      - language is "solidity", "rust", or alias
+      - language is one of supported languages or aliases
     ensures:
-      - Returns SolidityExtractor for solidity/sol
       - Returns RustExtractor for rust/rs
+      - Returns SolidityExtractor for solidity/sol
+      - Returns Flow9Extractor for flow9/flow
       - Returns error for unsupported language
 
 depends_on:
@@ -45,6 +49,7 @@ depends_on:
 
 external_deps:
   - anyhow
+  - flow9
 
 forbidden_deps:
   - serde_yaml    # no YAML parsing
@@ -53,3 +58,4 @@ invariants:
   - "Extractors never modify source files"
   - "Extraction is deterministic for same input"
   - "Failed extraction returns error, never panics"
+  - "No unsafe code"

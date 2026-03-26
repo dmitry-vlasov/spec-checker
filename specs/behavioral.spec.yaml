@@ -1,0 +1,127 @@
+# Spec Checker - Behavioral checker module
+# Inherits: language=rust, context=core, stability=stable (root)
+
+module: behavioral
+source_path: src/behavioral.rs
+
+layer: application
+
+exposes:
+  InvariantTier:
+    kind: type
+    type_constraints:
+      - "is_sum(Self)"
+      - "has_variant(Self, Static)"
+      - "has_variant(Self, Behavioral)"
+
+  ClassifiedInvariant:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "cloneable"
+      - "has_field(Self, text)"
+      - "has_field(Self, tier)"
+
+  InvariantResult:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "serializable"
+      - "has_field(Self, satisfies)"
+      - "has_field(Self, reasoning)"
+      - "has_field(Self, tier)"
+
+  LlmCheckMode:
+    kind: type
+    type_constraints:
+      - "is_sum(Self)"
+      - "has_variant(Self, Off)"
+      - "has_variant(Self, DryRun)"
+      - "has_variant(Self, CachedOnly)"
+      - "has_variant(Self, Full)"
+
+  BehavioralSummary:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "has_field(Self, static_passed)"
+      - "has_field(Self, static_failed)"
+      - "has_field(Self, llm_passed)"
+      - "has_field(Self, llm_failed)"
+      - "has_field(Self, cached)"
+      - "has_field(Self, skipped)"
+      - "has_field(Self, failures)"
+
+  classify_invariant:
+    kind: function
+    type_constraints:
+      - "equals(param(text), str)"
+      - "equals(return, InvariantTier)"
+    ensures:
+      - Classifies "never panics" and "no panic" as Static
+      - Classifies "no unwrap" and "no unsafe" as Static
+      - Everything else classified as Behavioral
+
+  collect_invariants:
+    kind: function
+    type_constraints:
+      - "equals(param(spec), ModuleSpec)"
+      - "equals(con(return), Vec)"
+    ensures:
+      - Collects module-level invariants
+      - Collects function-level requires and ensures
+
+  check_static_invariant:
+    kind: function
+    ensures:
+      - Checks "never panics" by scanning for panic/unwrap/expect
+      - Checks "no unsafe" by scanning for unsafe blocks
+      - Strips test modules before analysis
+      - Strips string literals to avoid false positives
+
+  check_behavioral:
+    kind: function
+    ensures:
+      - Routes static invariants to pattern matchers
+      - Routes behavioral invariants through LLM check mode
+      - Respects cache for LLM results
+      - Skips LLM calls when mode is Off or DryRun
+
+  strip_tests:
+    kind: function
+    type_constraints:
+      - "equals(param(source), str)"
+      - "equals(return, String)"
+    ensures:
+      - Removes #[cfg(test)] module blocks
+      - Preserves non-test code unchanged
+
+  cache_key:
+    kind: function
+    type_constraints:
+      - "equals(return, String)"
+    ensures:
+      - Deterministic for same inputs
+      - Uses SHA256
+
+depends_on:
+  - src/spec.rs
+  - src/extractors/mod.rs
+
+external_deps:
+  - sha2
+  - reqwest
+  - serde_json
+  - tokio
+
+forbidden_deps:
+  - clap
+  - colored
+  - syn
+
+invariants:
+  - "LLM results are always cached after first call"
+  - "Cache keys are deterministic (SHA256 of code + invariant)"
+  - "Static checks never call LLM"
+  - "LLM responses are clearly labeled as LLM-verified"
+  - "No unsafe code"

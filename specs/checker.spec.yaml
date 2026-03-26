@@ -25,11 +25,20 @@ exposes:
       - "has_variant(Self, Syntactic)"
       - "has_variant(Self, RulesEngine)"
       - "has_variant(Self, TypeFormula)"
+      - "has_variant(Self, Smt)"
+
+  ConstraintSeverity:
+    kind: type
+    type_constraints:
+      - "is_sum(Self)"
+      - "has_variant(Self, Error)"
+      - "has_variant(Self, Warning)"
 
   ConstraintResult:
     kind: type
     type_constraints:
       - "is_product(Self)"
+      - "cloneable"
       - "has_field(Self, kind)"
       - "has_field(Self, tier)"
       - "has_field(Self, severity)"
@@ -54,16 +63,6 @@ exposes:
       - "has_field(Self, rules)"
       - "has_field(Self, layer_config)"
 
-  CheckResult.error:
-    kind: function
-    type_constraints:
-      - "equals(param(0), Self)"
-
-  CheckResult.warning:
-    kind: function
-    type_constraints:
-      - "equals(param(0), Self)"
-
   SpecChecker.new:
     kind: function
     type_constraints:
@@ -75,7 +74,7 @@ exposes:
   SpecChecker.with_specs:
     kind: function
     type_constraints:
-      - "equals(param(0), Self)"               # takes self by value (builder)
+      - "equals(param(0), Self)"
       - "equals(return, Self)"
     ensures:
       - Builds spec map for cross-module checking
@@ -83,7 +82,7 @@ exposes:
   SpecChecker.with_rules_config:
     kind: function
     type_constraints:
-      - "equals(param(0), Self)"               # takes self by value (builder)
+      - "equals(param(0), Self)"
       - "equals(return, Self)"
     ensures:
       - Removes disabled built-in rules
@@ -105,30 +104,55 @@ exposes:
       - Returns errors for forbidden dependencies
       - Returns errors for architectural rule violations
       - Returns warnings for unlisted dependencies
+      - All results tagged with ConstraintKind and VerificationTier
 
   SpecChecker.check_composition:
     kind: function
     type_constraints:
       - "equals(param(0), Self)"
+      - "equals(return, CheckResult)"
     ensures:
       - Checks event subscribe/emit matching across modules
       - Checks contract compatibility at dependency boundaries
+      - Checks cross-module protocol compatibility
       - Runs SMT state ownership consistency when z3 available
 
   SpecChecker.check_subsystem:
     kind: function
     type_constraints:
       - "equals(param(0), Self)"
+      - "equals(return, CheckResult)"
     ensures:
       - Verifies all listed modules exist
       - Checks delegated interface targets exist
       - Warns about dependencies outside subsystem
+      - Enforces forbidden subsystem dependencies
+
+# Builder protocol: new → configure → check
+# Uses qualified method names matching what the Rust extractor produces
+protocol:
+  states: [created, configured, checking]
+  initial: created
+  transitions:
+    - { from: created, call: SpecChecker.with_specs, to: configured }
+    - { from: created, call: SpecChecker.with_rules_config, to: configured }
+    - { from: configured, call: SpecChecker.with_specs, to: configured }
+    - { from: configured, call: SpecChecker.with_rules_config, to: configured }
+    - { from: configured, call: SpecChecker.check, to: checking }
+    - { from: configured, call: SpecChecker.check_composition, to: checking }
+    - { from: configured, call: SpecChecker.check_subsystem, to: checking }
+    - { from: checking, call: SpecChecker.check, to: checking }
+    - { from: checking, call: SpecChecker.check_composition, to: checking }
+    - { from: checking, call: SpecChecker.check_subsystem, to: checking }
+  balanced_pairs: []
 
 depends_on:
   - src/extractors/mod.rs
   - src/spec.rs
   - src/rules.rs
   - src/type_formula.rs
+  - src/smt.rs
+  - src/behavioral.rs
 
 external_deps:
   - anyhow
@@ -143,3 +167,6 @@ invariants:
   - "Errors are always more severe than warnings"
   - "check() never panics, returns Result"
   - "All built-in rules can be disabled via config"
+  - "Every error/warning is also recorded in constraint_results"
+  - "No unsafe code"
+  - "All constraint checks run regardless of earlier failures"

@@ -11,6 +11,7 @@ exposes:
     kind: type
     type_constraints:
       - "is_product(Self)"
+      - "cloneable"
       - "has_field(Self, declarations)"
       - "has_field(Self, assertions)"
 
@@ -18,6 +19,7 @@ exposes:
     kind: type
     type_constraints:
       - "is_sum(Self)"
+      - "cloneable"
       - "has_variant(Self, Sat)"
       - "has_variant(Self, Unsat)"
       - "has_variant(Self, Unknown)"
@@ -27,31 +29,82 @@ exposes:
     kind: function
     type_constraints:
       - "equals(return, Self)"
+    ensures:
+      - Returns empty query with no declarations or assertions
+
+  SmtQuery.to_smtlib2:
+    kind: function
+    type_constraints:
+      - "equals(param(0), Self)"
+      - "equals(return, String)"
+    ensures:
+      - Generates valid SMT-LIB2 format
+      - Includes set-logic, declarations, assertions, check-sat
 
   SmtQuery.check_sat:
     kind: function
     type_constraints:
+      - "equals(param(0), Self)"
       - "equals(return, SmtResult)"
+    ensures:
+      - Returns Error when z3 not available
+      - Returns Sat, Unsat, or Unknown on success
 
   solver_available:
     kind: function
     type_constraints:
       - "equals(return, bool)"
+    ensures:
+      - Checks if z3 binary is on PATH
+      - Never panics
 
   check_state_ownership_consistency:
     kind: function
     type_constraints:
       - "fallible(return)"
+    ensures:
+      - Encodes mutual exclusion as SMT constraints
+      - Returns Ok when no conflicts
+      - Returns Err with descriptive message on conflict
+      - Returns Err when z3 not available
 
   check_numeric_constraints:
     kind: function
     type_constraints:
       - "equals(return, SmtResult)"
+    ensures:
+      - Declares integer variables with bounds
+      - Returns Sat when constraints are satisfiable
+      - Returns Unsat when constraints are contradictory
 
   check_implication:
     kind: function
     type_constraints:
       - "equals(return, SmtResult)"
+    ensures:
+      - Negates conclusion to check validity
+      - Returns Unsat when implication holds (valid)
+      - Returns Sat when implication does not hold
+
+# SmtQuery builder protocol (uses qualified method names)
+protocol:
+  states: [empty, building, solved]
+  initial: empty
+  terminal: [solved]
+  transitions:
+    - { from: empty, call: SmtQuery.declare_int, to: building }
+    - { from: empty, call: SmtQuery.declare_bool, to: building }
+    - { from: building, call: SmtQuery.declare_int, to: building }
+    - { from: building, call: SmtQuery.declare_bool, to: building }
+    - { from: building, call: SmtQuery.assert_raw, to: building }
+    - { from: building, call: SmtQuery.assert_eq, to: building }
+    - { from: building, call: SmtQuery.assert_ge, to: building }
+    - { from: building, call: SmtQuery.assert_gt, to: building }
+    - { from: building, call: SmtQuery.assert_ne, to: building }
+    - { from: building, call: SmtQuery.assert_implies, to: building }
+    - { from: building, call: SmtQuery.check_sat, to: solved }
+    - { from: building, call: SmtQuery.to_smtlib2, to: building }
+  balanced_pairs: []
 
 external_deps:
   - sha2
@@ -64,3 +117,5 @@ forbidden_deps:
 invariants:
   - "Degrades gracefully when z3 is not installed"
   - "No unsafe code"
+  - "z3 subprocess has 5-second timeout"
+  - "SMT-LIB2 output always includes (set-logic ALL) and (check-sat)"

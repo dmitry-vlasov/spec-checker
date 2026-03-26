@@ -1,0 +1,32 @@
+# Extraction subsystem
+# Groups all language-specific source code extractors
+
+subsystem: Extraction
+modules:
+  - src/extractors/mod.rs
+  - src/extractors/rust.rs
+  - src/extractors/solidity.rs
+
+exposes:
+  get_extractor:
+    delegates_to: extractors.get_extractor
+    requires:
+      - language string is non-empty
+    ensures:
+      - Returns appropriate extractor for supported language
+      - Returns error for unsupported language
+
+invariants:
+  - "All extractors implement the same Extractor trait"
+  - "Extraction never modifies source files"
+  - "Each extractor is independent — no cross-extractor dependencies"
+  - "Adding a new language requires only a new extractor + registration in get_extractor"
+
+forbidden_deps:
+  - clap
+  - colored
+  - serde_yaml      # extractors don't parse specs
+
+context: core
+stability: stable
+layer: infrastructure

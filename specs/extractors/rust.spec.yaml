@@ -10,17 +10,11 @@ exposes:
     kind: type
     type_constraints:
       - "is_product(Self)"
-      - "is_subtype(Self, Extractor)"
 
   RustExtractor.new:
     kind: function
     type_constraints:
       - "equals(return, Self)"
-    ensures:
-      - Creates RustExtractor instance
-
-# Implements Extractor trait (via impl block):
-#   extract(&self, path: &PathBuf) -> Result<ExtractedModule>
 
 depends_on: []
 
@@ -41,3 +35,4 @@ invariants:
   - "Filters test modules (#[cfg(test)])"
   - "Filters internal imports (crate::, super::)"
   - "Records trait implementations and derive macros per type"
+  - "No unsafe code"

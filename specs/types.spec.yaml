@@ -44,11 +44,11 @@ exposes:
       - "cloneable"
       - "has_field(Self, name)"
       - "has_field(Self, kind)"
+      - "has_field(Self, generics)"
       - "has_field(Self, fields)"
       - "has_field(Self, variants)"
       - "has_field(Self, trait_impls)"
       - "has_field(Self, derives)"
-      - "has_field(Self, generics)"
 
   FieldInfo:
     kind: type
@@ -75,6 +75,7 @@ exposes:
       - "has_field(Self, name)"
       - "has_field(Self, params)"
       - "has_field(Self, return_type)"
+      - "has_field(Self, generics)"
 
   ParamInfo:
     kind: type
@@ -114,3 +115,4 @@ invariants:
   - "TypeRepr is syntactic, not semantic (no type resolution)"
   - "TypeRepr equality is structural"
   - "Display output can be re-parsed by parse_type_repr_from_str"
+  - "No unsafe code"

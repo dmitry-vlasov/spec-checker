@@ -14,6 +14,7 @@ exposes:
       - "serializable"
       - "cloneable"
       - "has_field(Self, name)"
+      - "has_field(Self, description)"
       - "has_field(Self, when)"
       - "has_field(Self, require)"
       - "has_field(Self, severity)"
@@ -45,6 +46,14 @@ exposes:
       - "has_field(Self, message)"
       - "has_field(Self, severity)"
 
+  EvalContext:
+    kind: type
+    type_constraints:
+      - "is_product(Self)"
+      - "has_field(Self, source)"
+      - "has_field(Self, target)"
+      - "has_field(Self, layer_config)"
+
   LayersInput:
     kind: type
     type_constraints:
@@ -62,25 +71,24 @@ exposes:
       - Returns layer-direction rule
       - Returns context-isolation rule
       - Returns stability-direction rule
+      - Returns exactly 3 rules
 
   check_dependency:
     kind: function
     type_constraints:
       - "equals(param(source), ModuleSpec)"
       - "equals(param(target), ModuleSpec)"
-      - "equals(param(rules), [Rule])"
-      - "equals(param(layer_config), LayerConfig)"
       - "equals(con(return), Vec)"
     ensures:
       - Evaluates each rule's 'when' condition
       - For matching rules, evaluates 'require' condition
       - Returns violation for each unsatisfied require
+      - Collects all violations, does not short-circuit
 
   evaluate:
     kind: function
     type_constraints:
       - "equals(param(expr), str)"
-      - "equals(param(ctx), EvalContext)"
       - "fallible(return)"
     ensures:
       - Evaluates boolean expressions
@@ -88,6 +96,7 @@ exposes:
       - Supports ==, != comparisons
       - Supports property access (source.X, target.X)
       - Supports can_depend_on method calls
+      - Returns true for "true", false for "false"
 
 depends_on:
   - src/spec.rs
@@ -105,3 +114,4 @@ invariants:
   - "Built-in rules use the same DSL as custom rules"
   - "Rules are evaluated in order"
   - "All violations are collected, not short-circuited"
+  - "No unsafe code"
