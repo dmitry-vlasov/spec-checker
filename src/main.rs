@@ -156,17 +156,21 @@ fn cmd_check(
 
         let result = checker.check(spec)?;
 
-        for error in &result.errors {
-            println!("  {} {}", "✗".red(), error);
-            total_errors += 1;
+        for cr in &result.constraint_results {
+            let tag = format!("[{}|{}]", cr.kind, cr.tier);
+            match cr.severity {
+                checker::ConstraintSeverity::Error => {
+                    println!("  {} {} {}", "✗".red(), tag.dimmed(), cr.message);
+                    total_errors += 1;
+                }
+                checker::ConstraintSeverity::Warning => {
+                    println!("  {} {} {}", "⚠".yellow(), tag.dimmed(), cr.message);
+                    total_warnings += 1;
+                }
+            }
         }
 
-        for warning in &result.warnings {
-            println!("  {} {}", "⚠".yellow(), warning);
-            total_warnings += 1;
-        }
-
-        if result.errors.is_empty() && result.warnings.is_empty() {
+        if result.constraint_results.is_empty() {
             println!("  {} All checks passed", "✓".green());
         }
 
@@ -177,17 +181,21 @@ fn cmd_check(
     if specs.len() > 1 {
         let composition_result = checker.check_composition(&specs);
 
-        if !composition_result.errors.is_empty() || !composition_result.warnings.is_empty() {
+        if !composition_result.constraint_results.is_empty() {
             println!("{}", "Composition Checks".bold().cyan());
 
-            for error in &composition_result.errors {
-                println!("  {} {}", "✗".red(), error);
-                total_errors += 1;
-            }
-
-            for warning in &composition_result.warnings {
-                println!("  {} {}", "⚠".yellow(), warning);
-                total_warnings += 1;
+            for cr in &composition_result.constraint_results {
+                let tag = format!("[{}|{}]", cr.kind, cr.tier);
+                match cr.severity {
+                    checker::ConstraintSeverity::Error => {
+                        println!("  {} {} {}", "✗".red(), tag.dimmed(), cr.message);
+                        total_errors += 1;
+                    }
+                    checker::ConstraintSeverity::Warning => {
+                        println!("  {} {} {}", "⚠".yellow(), tag.dimmed(), cr.message);
+                        total_warnings += 1;
+                    }
+                }
             }
 
             println!();
@@ -204,17 +212,21 @@ fn cmd_check(
 
             let sub_result = checker.check_subsystem(subsystem, &specs);
 
-            for error in &sub_result.errors {
-                println!("  {} {}", "✗".red(), error);
-                total_errors += 1;
+            for cr in &sub_result.constraint_results {
+                let tag = format!("[{}|{}]", cr.kind, cr.tier);
+                match cr.severity {
+                    checker::ConstraintSeverity::Error => {
+                        println!("  {} {} {}", "✗".red(), tag.dimmed(), cr.message);
+                        total_errors += 1;
+                    }
+                    checker::ConstraintSeverity::Warning => {
+                        println!("  {} {} {}", "⚠".yellow(), tag.dimmed(), cr.message);
+                        total_warnings += 1;
+                    }
+                }
             }
 
-            for warning in &sub_result.warnings {
-                println!("  {} {}", "⚠".yellow(), warning);
-                total_warnings += 1;
-            }
-
-            if sub_result.errors.is_empty() && sub_result.warnings.is_empty() {
+            if sub_result.constraint_results.is_empty() {
                 println!("  {} All checks passed", "✓".green());
             }
 
@@ -512,6 +524,67 @@ fn cmd_diff(spec_path: &PathBuf, source_path: &PathBuf) -> Result<()> {
             println!("  {} {} (FORBIDDEN)", "✗".red(), import);
         } else if !is_allowed {
             println!("  {} {} (not in spec)", "?".yellow(), import);
+        }
+    }
+
+    // State variables
+    if !spec.owns_state.is_empty() || !extracted.state_variables.is_empty() {
+        println!();
+        println!("{}", "State Variables:".bold());
+        for state in &spec.owns_state {
+            if extracted.state_variables.contains(state) {
+                println!("  {} {} (spec + impl)", "✓".green(), state);
+            } else {
+                println!("  {} {} (spec only - MISSING)", "✗".red(), state);
+            }
+        }
+        for state in &extracted.state_variables {
+            if !spec.owns_state.contains(state) {
+                println!("  {} {} (impl only - NOT IN SPEC)", "?".yellow(), state);
+            }
+        }
+    }
+
+    // Events
+    if !spec.emits.is_empty() || !extracted.events.is_empty() {
+        println!();
+        println!("{}", "Events:".bold());
+        for event in &spec.emits {
+            if extracted.events.contains(event) {
+                println!("  {} {} (spec + impl)", "✓".green(), event);
+            } else {
+                println!("  {} {} (spec only - MISSING)", "✗".red(), event);
+            }
+        }
+        for event in &extracted.events {
+            if !spec.emits.contains(event) {
+                println!("  {} {} (impl only - NOT IN SPEC)", "?".yellow(), event);
+            }
+        }
+    }
+
+    // Protocol
+    if let Some(ref protocol) = spec.protocol {
+        println!();
+        println!("{}", "Protocol:".bold());
+        println!(
+            "  States: {} | Initial: {} | Terminal: {:?}",
+            protocol.states.join(", "),
+            protocol.initial,
+            protocol.terminal
+        );
+        println!("  Transitions: {}", protocol.transitions.len());
+        for t in &protocol.transitions {
+            let fn_exists = extracted.public_functions.contains(&t.call)
+                || extracted.function_info.contains_key(&t.call);
+            let marker = if fn_exists { "✓".green() } else { "✗".red() };
+            println!("    {} {} -> {}() -> {}", marker, t.from, t.call, t.to);
+        }
+        if !protocol.balanced_pairs.is_empty() {
+            println!("  Balanced pairs:");
+            for pair in &protocol.balanced_pairs {
+                println!("    [{}, {}]", pair[0], pair[1]);
+            }
         }
     }
 

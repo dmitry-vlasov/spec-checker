@@ -498,6 +498,110 @@ impl ModuleSpec {
         }
     }
 
+    /// Detect protocol patterns from function names.
+    ///
+    /// Looks for common balanced pair patterns (open/close, acquire/release, etc.)
+    /// and lifecycle patterns (init/start/stop/shutdown) to generate protocol stubs.
+    fn detect_protocol(functions: &[String]) -> Option<ProtocolSpec> {
+        let func_set: std::collections::HashSet<&str> =
+            functions.iter().map(|s| s.as_str()).collect();
+
+        // Known balanced pair patterns
+        let pair_patterns: &[(&str, &str)] = &[
+            ("open", "close"),
+            ("acquire", "release"),
+            ("lock", "unlock"),
+            ("connect", "disconnect"),
+            ("begin", "end"),
+            ("start", "stop"),
+            ("subscribe", "unsubscribe"),
+            ("register", "unregister"),
+            ("enable", "disable"),
+            ("attach", "detach"),
+        ];
+
+        let mut balanced_pairs: Vec<[String; 2]> = Vec::new();
+
+        for (open_fn, close_fn) in pair_patterns {
+            // Check exact match
+            if func_set.contains(open_fn) && func_set.contains(close_fn) {
+                balanced_pairs.push([open_fn.to_string(), close_fn.to_string()]);
+            }
+
+            // Check with common prefixes/suffixes (e.g., db_open/db_close)
+            for func in functions {
+                if func.ends_with(&format!("_{}", open_fn)) {
+                    let prefix = &func[..func.len() - open_fn.len()];
+                    let close_candidate = format!("{}{}", prefix, close_fn);
+                    if func_set.contains(close_candidate.as_str()) {
+                        balanced_pairs.push([func.clone(), close_candidate]);
+                    }
+                }
+            }
+        }
+
+        // Detect init/new as lifecycle
+        let has_init = func_set.contains("init")
+            || func_set.contains("initialize")
+            || func_set.contains("new")
+            || func_set.contains("setup");
+
+        if balanced_pairs.is_empty() && !has_init {
+            return None;
+        }
+
+        // Build a simple protocol stub
+        let mut states = vec!["initial".to_string()];
+        let mut transitions = Vec::new();
+        let mut terminal = Vec::new();
+
+        if has_init {
+            states.push("ready".to_string());
+            let init_fn = if func_set.contains("init") {
+                "init"
+            } else if func_set.contains("initialize") {
+                "initialize"
+            } else if func_set.contains("new") {
+                "new"
+            } else {
+                "setup"
+            };
+            transitions.push(Transition {
+                from: "initial".into(),
+                call: init_fn.to_string(),
+                to: "ready".into(),
+            });
+        }
+
+        // Add shutdown/close as terminal if detected
+        let shutdown_fns = ["shutdown", "destroy", "dispose", "cleanup", "teardown"];
+        for sfn in &shutdown_fns {
+            if func_set.contains(sfn) {
+                states.push("terminated".to_string());
+                terminal.push("terminated".to_string());
+                let from = if states.contains(&"ready".to_string()) {
+                    "ready"
+                } else {
+                    "initial"
+                };
+                transitions.push(Transition {
+                    from: from.into(),
+                    call: sfn.to_string(),
+                    to: "terminated".into(),
+                });
+                break;
+            }
+        }
+
+        Some(ProtocolSpec {
+            states,
+            initial: "initial".to_string(),
+            terminal,
+            transitions,
+            balanced_pairs,
+        })
+    }
+
     /// Create a spec from extracted module information
     pub fn from_extracted(extracted: &ExtractedModule) -> Self {
         let mut exposes = HashMap::new();
@@ -570,6 +674,9 @@ impl ModuleSpec {
             });
         }
 
+        // Detect protocol patterns from function names
+        let protocol = Self::detect_protocol(&extracted.public_functions);
+
         Self {
             module: extracted.name.clone(),
             language: Some(extracted.language.clone()),
@@ -590,7 +697,7 @@ impl ModuleSpec {
             modifies: Vec::new(),
             callable_by: Vec::new(),
             roles: Vec::new(),
-            protocol: None,
+            protocol,
         }
     }
 }
@@ -853,5 +960,95 @@ invariants:
         assert_eq!(spec.depends_on.len(), 2);
         assert_eq!(spec.forbidden_deps.len(), 1);
         assert_eq!(spec.invariants.len(), 1);
+    }
+
+    #[test]
+    fn test_detect_protocol_balanced_pairs() {
+        let funcs = vec![
+            "open".to_string(),
+            "close".to_string(),
+            "process".to_string(),
+        ];
+        let protocol = ModuleSpec::detect_protocol(&funcs);
+        assert!(protocol.is_some(), "Should detect open/close pair");
+        let p = protocol.unwrap();
+        assert_eq!(p.balanced_pairs.len(), 1);
+        assert_eq!(p.balanced_pairs[0], ["open", "close"]);
+    }
+
+    #[test]
+    fn test_detect_protocol_lifecycle() {
+        let funcs = vec![
+            "init".to_string(),
+            "process".to_string(),
+            "shutdown".to_string(),
+        ];
+        let protocol = ModuleSpec::detect_protocol(&funcs);
+        assert!(protocol.is_some(), "Should detect lifecycle");
+        let p = protocol.unwrap();
+        assert!(
+            p.transitions.iter().any(|t| t.call == "init" && t.to == "ready"),
+            "Should have init transition"
+        );
+        assert!(
+            p.transitions.iter().any(|t| t.call == "shutdown" && t.to == "terminated"),
+            "Should have shutdown transition"
+        );
+        assert!(p.terminal.contains(&"terminated".to_string()));
+    }
+
+    #[test]
+    fn test_detect_protocol_none() {
+        let funcs = vec![
+            "calculate".to_string(),
+            "transform".to_string(),
+        ];
+        let protocol = ModuleSpec::detect_protocol(&funcs);
+        assert!(protocol.is_none(), "No protocol patterns should return None");
+    }
+
+    #[test]
+    fn test_detect_protocol_multiple_pairs() {
+        let funcs = vec![
+            "open".to_string(),
+            "close".to_string(),
+            "lock".to_string(),
+            "unlock".to_string(),
+        ];
+        let protocol = ModuleSpec::detect_protocol(&funcs);
+        assert!(protocol.is_some());
+        let p = protocol.unwrap();
+        assert_eq!(p.balanced_pairs.len(), 2);
+    }
+
+    #[test]
+    fn test_subsystem_spec_deserialization() {
+        let yaml = r#"
+subsystem: PaymentService
+modules:
+  - src/bridge.rs
+  - src/registry.rs
+exposes:
+  deposit:
+    delegates_to: bridge.deposit
+    requires:
+      - amount > 0
+invariants:
+  - "total >= 0"
+depends_on: [AuthService]
+layer: application
+context: payments
+stability: stable
+"#;
+        let sub: SubsystemSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(sub.subsystem, "PaymentService");
+        assert_eq!(sub.modules.len(), 2);
+        assert_eq!(sub.exposes.len(), 1);
+        assert_eq!(
+            sub.exposes["deposit"].delegates_to,
+            Some("bridge.deposit".to_string())
+        );
+        assert_eq!(sub.depends_on, vec!["AuthService"]);
+        assert_eq!(sub.layer, Some(Layer::new("application")));
     }
 }

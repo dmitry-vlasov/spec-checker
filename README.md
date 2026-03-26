@@ -1,6 +1,6 @@
 # Spec Checker
 
-A structural and behavioral specification checker for codebases.
+A specification checker for codebases, built on the **spec-type** framework — a unified type system that extends classical types from expressions to modules, subsystems, and systems.
 
 ## Purpose
 
@@ -10,6 +10,25 @@ This tool verifies that implementation code conforms to declarative specificatio
 Human intent → Spec (human-sized) → Checker → Code (AI-sized)
 ```
 
+## The Spec-Type Concept
+
+Traditional type systems verify that `f(x)` is well-formed by checking that `x` fits `f`'s input contract. Spec-checker generalizes this to every granularity level:
+
+| Level | "Type" Concept | Composition Check |
+|-------|---------------|-------------------|
+| **Expressions** | Types | Type checking |
+| **Functions** | Type constraints, requires/ensures | Contract satisfaction |
+| **Modules** | Exposes, dependencies, state, protocol | Signature + protocol matching |
+| **Subsystems** | Delegated interfaces, invariants | Interface + boundary checking |
+
+A **spec-type** is an open set of constraints attached to an entity. Each constraint has a *kind* (structural, dependency, architectural, type-constraint, protocol, event) and is verified through a **cascade**:
+
+1. **Syntactic matching** — direct structural comparison. Certain.
+2. **SMT solver (z3)** — encode as formulas, get definitive answer. Certain.
+3. **LLM-assisted** — binary yes/no question. Clearly labeled as "LLM-verified, not formally proven."
+
+Each step either decides or passes to the next level. Output shows which tier verified each result.
+
 ## Key Benefits
 
 1. **Spec as Prompt Context**: AI gets type constraints, conditions, allowed imports → better generation
@@ -17,10 +36,11 @@ Human intent → Spec (human-sized) → Checker → Code (AI-sized)
 3. **Review Efficiency**: Review 10-line spec change, not 500-line code change
 4. **Prevent Drift**: Shortcuts violate spec → CI fails → architecture preserved
 5. **Multi-Agent Coordination**: Specs define contracts between agents working on different modules
+6. **Composition Verification**: Cross-module checks catch integration bugs without integration tests
 
 ## Spec Format
 
-Unified YAML format covering structural, type, and behavioral specifications:
+Unified YAML format covering structural, type, protocol, and behavioral specifications:
 
 ```yaml
 module: Bridge
@@ -59,6 +79,31 @@ depends_on:
 
 forbidden_deps:
   - TestUtils
+
+# State ownership tracking
+owns_state: [tokenBalances, withdrawalNonces]
+reads_state: [allowlist]          # external state this module reads
+modifies: [registry]              # external state this module modifies
+
+# Event specifications
+emits: [Deposit, Withdraw]
+subscribes: [SystemShutdown]
+
+# Protocol: valid call sequences
+protocol:
+  states: [uninitialized, active, paused, closed]
+  initial: uninitialized
+  terminal: [closed]
+  transitions:
+    - { from: uninitialized, call: initialize, to: active }
+    - { from: active, call: deposit, to: active }
+    - { from: active, call: withdraw, to: active }
+    - { from: active, call: pause, to: paused }
+    - { from: paused, call: resume, to: active }
+    - { from: active, call: close, to: closed }
+    - { from: paused, call: close, to: closed }
+  balanced_pairs:
+    - [pause, resume]
 
 invariants:
   - "forall token: withdrawn[token] <= deposited[token]"
@@ -130,6 +175,88 @@ exposes:
 | `and` / `or` / `not` / `implies` | Logical connectives |
 
 Type comparisons are **language-agnostic**: `equals` strips references (`&`, `&mut`) so specs express type dependencies, not language-specific passing conventions.
+
+## Protocol Specifications
+
+Protocols define valid call sequences as state machines:
+
+```yaml
+protocol:
+  states: [disconnected, connected, closed]
+  initial: disconnected
+  terminal: [closed]
+  transitions:
+    - { from: disconnected, call: connect, to: connected }
+    - { from: connected, call: send, to: connected }
+    - { from: connected, call: disconnect, to: closed }
+  balanced_pairs:
+    - [connect, disconnect]
+```
+
+The checker verifies:
+- **State consistency**: initial/terminal states are in the states list, transitions reference valid states
+- **Function existence**: all transition functions exist in the implementation
+- **Reachability**: warns about unreachable states and dead-end non-terminal states
+- **Balanced pairs**: static analysis counts open/close calls in source code and warns about mismatches
+- **Cross-module protocols**: when module A depends on module B with a protocol, verifies that subscribed events correspond to protocol transitions
+
+## State Ownership
+
+Track which modules own, read, or modify shared state:
+
+```yaml
+owns_state: [balances, nonces]     # this module owns these
+reads_state: [config]               # reads external state
+modifies: [registry]                # modifies external state
+```
+
+The checker verifies:
+- Listed state variables exist in the implementation
+- Warns about unlisted state variables
+- **Cross-module**: `reads_state`/`modifies` references must match some module's `owns_state`
+- **Ownership conflicts**: errors if two modules both claim to own the same state (also verified by SMT solver when z3 is available)
+
+## Subsystem Specifications
+
+Group modules into higher-level units with `*.subsystem.yaml` files:
+
+```yaml
+subsystem: PaymentService
+modules:
+  - src/bridge.rs
+  - src/registry.rs
+
+exposes:
+  deposit:
+    delegates_to: bridge.deposit
+    requires: [amount > 0]
+    ensures: [balance increases]
+
+invariants:
+  - "total_deposited >= total_withdrawn"
+
+depends_on: [AuthService]
+forbidden_deps: [TestUtils]
+
+layer: application
+context: payments
+stability: stable
+```
+
+The checker verifies:
+- All listed modules have matching specs
+- Delegated interface targets exist in member modules' exposes
+- Warns about internal dependencies that leak outside the subsystem
+- Enforces forbidden subsystem dependencies
+
+## Composition Checking
+
+When multiple specs are loaded, the checker automatically runs cross-module verification:
+
+- **Event subscribe/emit matching**: every subscription must have a matching emitter
+- **Contract compatibility**: when a consumer's `requires` references a provider's function, checks that the provider's `ensures` cover the requirement
+- **State ownership consistency**: SMT-verified mutual exclusion of state ownership (when z3 is available)
+- **Cross-module protocol compatibility**: verifies event subscriptions align with provider's protocol transitions
 
 ## Hierarchical Specs
 
@@ -224,16 +351,26 @@ disable_builtin:
   - layer-direction
 ```
 
-## Behavioral Checker
+## Verification Cascade
 
-Invariants, requires, and ensures clauses are verified through a tiered approach:
+Every constraint check goes through a cascade of increasingly powerful checkers:
 
-### Tier 1: Static-Semantic (no LLM)
-Pattern-based checks run automatically:
-- "never panics" → scans for `unwrap()`, `panic!()`, `expect()`
-- "no unsafe" → scans for `unsafe` blocks
+### Tier 1: Syntactic (always runs)
+- Entity existence (functions, types, variables)
+- Dependency matching (allowed/forbidden)
+- Event existence and completeness
+- Protocol state machine validation
+- State ownership conflicts
+- Balanced pair call counting
 
-### Tier 2: LLM-Verified
+### Tier 2: SMT Solver (when z3 is available)
+- State ownership mutual exclusion (formally verified)
+- Numeric constraint satisfiability
+- Logical implication checking
+
+Install z3 for SMT verification: `apt install z3` / `brew install z3`. If z3 is not found, these checks are silently skipped.
+
+### Tier 3: LLM-Verified (opt-in)
 Invariants requiring code comprehension are sent to an LLM with hash-based caching:
 
 ```bash
@@ -251,6 +388,16 @@ Results are cached in `.spec-cache/` keyed by `sha256(code + invariant)`. Unchan
 
 **Important**: LLM verification is not formal proof. Results are clearly labeled as "LLM-verified".
 
+### Output Tags
+
+Every check result shows its constraint kind and verification tier:
+
+```
+  ✗ [dependency|syntactic] Forbidden dependency: 'bridge' imports 'test_utils'
+  ⚠ [architectural|rules-engine] Layer violation: infrastructure → domain
+  ✓ [architectural|smt] State ownership consistency verified
+```
+
 ## Supported Languages
 
 | Language | Extractor | Status |
@@ -266,6 +413,15 @@ Results are cached in `.spec-cache/` keyed by `sha256(code + invariant)`. Unchan
 cargo install --path .
 ```
 
+Optional: install z3 for SMT-based verification:
+```bash
+# Ubuntu/Debian
+apt install z3
+
+# macOS
+brew install z3
+```
+
 ## Usage
 
 ```bash
@@ -275,11 +431,17 @@ spec-checker check ./specs -s .
 # Check a single module
 spec-checker check ./specs/checker.spec.yaml -s .
 
+# With custom rules
+spec-checker check ./specs -s . -r rules.yaml
+
 # With behavioral checks (dry-run)
 spec-checker check ./specs -s . --llm-check dry-run
 
-# Generate spec skeleton from existing code
+# Generate spec skeleton from existing code (with protocol detection)
 spec-checker init --language rust ./src/main.rs
+
+# Generate specs for entire directory
+spec-checker init --language rust ./src/ -o ./specs/
 
 # Diff: show spec vs implementation discrepancies
 spec-checker diff ./specs/main.spec.yaml ./src/main.rs
@@ -287,7 +449,7 @@ spec-checker diff ./specs/main.spec.yaml ./src/main.rs
 
 ## Self-Verification
 
-The spec-checker verifies its own structure (9 modules, ~100 type constraints, ~30 invariants):
+The spec-checker verifies its own structure (10 modules, 1 subsystem, ~120 type constraints, ~30 invariants):
 
 ```bash
 $ spec-checker check ./specs -s .
@@ -298,10 +460,14 @@ Spec Checker
 Checking: checker
   ✓ All checks passed
 
-Checking: extractors
+Checking: spec
   ✓ All checks passed
 
 ...
+
+Subsystem Checks
+Checking subsystem: CoreVerification
+  ✓ All checks passed
 
 ========================================
 PASSED: All specs validated
