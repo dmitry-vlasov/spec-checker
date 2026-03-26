@@ -6,6 +6,8 @@ use std::path::PathBuf;
 mod behavioral;
 mod checker;
 mod extractors;
+mod flow9_ast;
+mod flow9_parser;
 mod rules;
 mod smt;
 mod spec;

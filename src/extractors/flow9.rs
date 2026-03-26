@@ -3,8 +3,10 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use super::{ExtractedModule, Extractor};
+use crate::flow9_ast::{ArgType, Decl, Flow9Type, FunArg};
+use crate::flow9_parser;
 use crate::types::{
-    FieldInfo, FunctionInfo, GenericParam, ParamInfo, TypeInfo, TypeKind, TypeRepr, VariantInfo,
+    FieldInfo, FunctionInfo, ParamInfo, TypeInfo, TypeKind, TypeRepr, VariantInfo,
     Visibility as TypeVisibility,
 };
 
@@ -24,9 +26,142 @@ impl Extractor for Flow9Extractor {
     }
 }
 
+/// Convert a Flow9Type AST node to a TypeRepr
+fn flow9_type_to_type_repr(t: &Flow9Type) -> TypeRepr {
+    match t {
+        Flow9Type::Int => TypeRepr::Named("int".into()),
+        Flow9Type::Double => TypeRepr::Named("double".into()),
+        Flow9Type::Bool => TypeRepr::Named("bool".into()),
+        Flow9Type::Str => TypeRepr::Named("string".into()),
+        Flow9Type::Flow => TypeRepr::Named("flow".into()),
+        Flow9Type::NativeType => TypeRepr::Named("native".into()),
+        Flow9Type::Void => TypeRepr::Unit,
+        Flow9Type::Named(name) => TypeRepr::Named(name.clone()),
+        Flow9Type::TypeVar(tv) => TypeRepr::Named(tv.clone()),
+        Flow9Type::Array(inner) => TypeRepr::Applied(
+            Box::new(TypeRepr::Named("Array".into())),
+            vec![flow9_type_to_type_repr(inner)],
+        ),
+        Flow9Type::Ref(inner) => TypeRepr::Applied(
+            Box::new(TypeRepr::Named("ref".into())),
+            vec![flow9_type_to_type_repr(inner)],
+        ),
+        Flow9Type::FnType(params, ret) => {
+            let param_reprs: Vec<TypeRepr> = params.iter().map(flow9_type_to_type_repr).collect();
+            TypeRepr::FnPointer {
+                params: param_reprs,
+                ret: Box::new(flow9_type_to_type_repr(ret)),
+            }
+        }
+        Flow9Type::Parameterized(name, args) => {
+            let arg_reprs: Vec<TypeRepr> = args.iter().map(flow9_type_to_type_repr).collect();
+            TypeRepr::Applied(Box::new(TypeRepr::Named(name.clone())), arg_reprs)
+        }
+    }
+}
+
+/// Format a Flow9Type as a string (for signature strings)
+fn flow9_type_to_string(t: &Flow9Type) -> String {
+    match t {
+        Flow9Type::Int => "int".into(),
+        Flow9Type::Double => "double".into(),
+        Flow9Type::Bool => "bool".into(),
+        Flow9Type::Str => "string".into(),
+        Flow9Type::Flow => "flow".into(),
+        Flow9Type::NativeType => "native".into(),
+        Flow9Type::Void => "void".into(),
+        Flow9Type::Named(name) => name.clone(),
+        Flow9Type::TypeVar(tv) => tv.clone(),
+        Flow9Type::Array(inner) => format!("[{}]", flow9_type_to_string(inner)),
+        Flow9Type::Ref(inner) => format!("ref {}", flow9_type_to_string(inner)),
+        Flow9Type::FnType(params, ret) => {
+            let ps: Vec<String> = params.iter().map(flow9_type_to_string).collect();
+            format!("({}) -> {}", ps.join(", "), flow9_type_to_string(ret))
+        }
+        Flow9Type::Parameterized(name, args) => {
+            let as_: Vec<String> = args.iter().map(flow9_type_to_string).collect();
+            format!("{}<{}>", name, as_.join(", "))
+        }
+    }
+}
+
+/// Build a signature string from argtypes and return type
+fn build_sig_from_argtypes(arg_types: &[ArgType], return_type: &Flow9Type) -> String {
+    let params: Vec<String> = arg_types
+        .iter()
+        .map(|at| match &at.name {
+            Some(n) => format!("{} : {}", n, flow9_type_to_string(&at.type_)),
+            None => flow9_type_to_string(&at.type_),
+        })
+        .collect();
+    format!("({}) -> {}", params.join(", "), flow9_type_to_string(return_type))
+}
+
+/// Build a signature string from funargs and optional return type
+fn build_sig_from_funargs(args: &[FunArg], return_type: Option<&Flow9Type>) -> String {
+    let params: Vec<String> = args
+        .iter()
+        .map(|fa| match &fa.type_annotation {
+            Some(t) => format!("{} : {}", fa.name, flow9_type_to_string(t)),
+            None => fa.name.clone(),
+        })
+        .collect();
+    match return_type {
+        Some(rt) => format!("({}) -> {}", params.join(", "), flow9_type_to_string(rt)),
+        None => format!("({})", params.join(", ")),
+    }
+}
+
+/// Build FunctionInfo from funargs and optional return type
+fn build_fi_from_funargs(
+    name: &str,
+    args: &[FunArg],
+    return_type: Option<&Flow9Type>,
+) -> FunctionInfo {
+    let params: Vec<ParamInfo> = args
+        .iter()
+        .map(|fa| ParamInfo {
+            name: Some(fa.name.clone()),
+            type_repr: fa
+                .type_annotation
+                .as_ref()
+                .map(flow9_type_to_type_repr)
+                .unwrap_or(TypeRepr::Infer),
+            is_receiver: false,
+        })
+        .collect();
+    FunctionInfo {
+        name: name.to_string(),
+        params,
+        return_type: return_type.map(flow9_type_to_type_repr),
+        generics: vec![],
+    }
+}
+
+/// Build FunctionInfo from argtypes and return type
+fn build_fi_from_argtypes(
+    name: &str,
+    arg_types: &[ArgType],
+    return_type: &Flow9Type,
+) -> FunctionInfo {
+    let params: Vec<ParamInfo> = arg_types
+        .iter()
+        .map(|at| ParamInfo {
+            name: at.name.clone(),
+            type_repr: flow9_type_to_type_repr(&at.type_),
+            is_receiver: false,
+        })
+        .collect();
+    FunctionInfo {
+        name: name.to_string(),
+        params,
+        return_type: Some(flow9_type_to_type_repr(return_type)),
+        generics: vec![],
+    }
+}
+
 fn parse_flow9(raw_content: &str, path: &PathBuf) -> Result<ExtractedModule> {
-    // Strip comments before any parsing
-    let content = &strip_comments(raw_content);
+    let content = strip_comments(raw_content);
     let mut module = ExtractedModule {
         name: path
             .file_stem()
@@ -38,285 +173,267 @@ fn parse_flow9(raw_content: &str, path: &PathBuf) -> Result<ExtractedModule> {
         ..Default::default()
     };
 
-    // Extract imports
-    let import_re = regex::Regex::new(r"import\s+([\w/]+)\s*;")?;
-    for cap in import_re.captures_iter(content) {
-        module.imports.push(cap[1].to_string());
-    }
+    let parsed = flow9_parser::parse_flow9_source(&content)
+        .map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
 
-    // Find export block boundaries
-    let exported_names = extract_exported_names(content);
+    // Collect exported names
+    let exported_names: HashSet<String> = parsed.exports.iter().cloned().collect();
 
-    // Extract union definitions (Name ::= Variant1, Variant2;)
-    let union_re = regex::Regex::new(r"(\w+)\s*(?:<[^>]*>)?\s*::=\s*([^;]+);")?;
-    for cap in union_re.captures_iter(content) {
-        let name = cap[1].to_string();
-        let variants_str = cap[2].to_string();
-        let variant_names: Vec<String> = variants_str
-            .split(',')
-            .map(|s| {
-                // Strip type params: "Some<?>" -> "Some"
-                let trimmed = s.trim();
-                if let Some(pos) = trimmed.find('<') {
-                    trimmed[..pos].to_string()
-                } else {
-                    trimmed.to_string()
+    // Process all declarations
+    for decl in &parsed.declarations {
+        match decl {
+            Decl::Import(path) => {
+                if !module.imports.contains(path) {
+                    module.imports.push(path.clone());
                 }
-            })
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        let variants: Vec<VariantInfo> = variant_names
-            .iter()
-            .map(|vn| VariantInfo {
-                name: vn.clone(),
-                fields: vec![], // variant fields are on the struct definitions
-            })
-            .collect();
-
-        let ti = TypeInfo {
-            name: name.clone(),
-            kind: TypeKind::Enum, // unions map to sum types
-            generics: vec![],
-            fields: vec![],
-            variants,
-            trait_impls: vec![],
-            derives: vec![],
-        };
-        module.type_definitions.insert(name.clone(), ti);
-
-        if exported_names.contains(&name) {
-            module.public_functions.push(name); // types go in public list for visibility
-        }
-    }
-
-    // Extract struct definitions: Name(field : type, ...); or Name : (field : type, ...);
-    // Pattern 1: Name(field : type, field2 : type2);
-    let struct_re1 =
-        regex::Regex::new(r"(?m)^\s*([A-Z]\w*)\s*\(([^)]*)\)\s*;")?;
-    // Pattern 2: Name : (field : type, field2 : type2);
-    let struct_re2 =
-        regex::Regex::new(r"(?m)^\s*([A-Z]\w*)\s*:\s*\(([^)]*)\)\s*;")?;
-
-    for re in &[&struct_re1, &struct_re2] {
-        for cap in re.captures_iter(content) {
-            let name = cap[1].to_string();
-            let fields_str = cap[2].to_string();
-
-            // Skip if this looks like a function type declaration (has ->)
-            if fields_str.contains("->") {
-                continue;
             }
-
-            // Don't overwrite union definitions
-            if module.type_definitions.contains_key(&name) {
-                // But update fields on existing union variant entry if needed
-                continue;
+            Decl::Forbid(_) => {
+                // forbids are tracked via parsed.forbids
             }
+            Decl::Union {
+                name,
+                type_params: _,
+                variants,
+            } => {
+                let variant_infos: Vec<VariantInfo> = variants
+                    .iter()
+                    .map(|tn| VariantInfo {
+                        name: tn.name.clone(),
+                        fields: vec![],
+                    })
+                    .collect();
 
-            let fields = parse_struct_fields(&fields_str);
+                let ti = TypeInfo {
+                    name: name.clone(),
+                    kind: TypeKind::Enum,
+                    generics: vec![],
+                    fields: vec![],
+                    variants: variant_infos,
+                    trait_impls: vec![],
+                    derives: vec![],
+                };
+                module.type_definitions.insert(name.clone(), ti);
 
-            let ti = TypeInfo {
-                name: name.clone(),
-                kind: TypeKind::Struct,
-                generics: vec![],
+                if exported_names.contains(name) && !module.public_functions.contains(name) {
+                    module.public_functions.push(name.clone());
+                }
+            }
+            Decl::StructDecl {
+                name,
                 fields,
-                variants: vec![],
-                trait_impls: vec![],
-                derives: vec![],
-            };
-            module.type_definitions.insert(name.clone(), ti);
+                exported,
+            } => {
+                // Don't overwrite union definitions
+                if module.type_definitions.contains_key(name) {
+                    continue;
+                }
 
-            if exported_names.contains(&name) && !module.public_functions.contains(&name) {
-                module.public_functions.push(name);
+                let field_infos: Vec<FieldInfo> = fields
+                    .iter()
+                    .map(|fa| FieldInfo {
+                        name: fa.name.clone(),
+                        type_repr: fa
+                            .type_annotation
+                            .as_ref()
+                            .map(flow9_type_to_type_repr)
+                            .unwrap_or(TypeRepr::Infer),
+                        visibility: TypeVisibility::Public,
+                    })
+                    .collect();
+
+                let ti = TypeInfo {
+                    name: name.clone(),
+                    kind: TypeKind::Struct,
+                    generics: vec![],
+                    fields: field_infos,
+                    variants: vec![],
+                    trait_impls: vec![],
+                    derives: vec![],
+                };
+                module.type_definitions.insert(name.clone(), ti);
+
+                if (*exported || exported_names.contains(name))
+                    && !module.public_functions.contains(name)
+                {
+                    module.public_functions.push(name.clone());
+                }
             }
-        }
-    }
+            Decl::FunctionDecl {
+                name,
+                arg_types,
+                return_type,
+                exported,
+            } => {
+                // Skip struct-like declarations (uppercase first char)
+                if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                    continue;
+                }
 
-    // Extract function type declarations from export block: name : (types) -> rettype;
-    let fn_type_re =
-        regex::Regex::new(r"(\w+)\s*:\s*\(([^)]*)\)\s*->\s*([^;]+)\s*;")?;
-    for cap in fn_type_re.captures_iter(content) {
-        let name = cap[1].to_string();
-        let params_str = cap[2].to_string();
-        let ret_str = cap[3].trim().to_string();
+                let sig = build_sig_from_argtypes(arg_types, return_type);
+                module.function_signatures.insert(name.clone(), sig);
 
-        // Skip struct-like declarations (name starts with uppercase and no ->)
-        if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
-            continue;
-        }
+                let fi = build_fi_from_argtypes(name, arg_types, return_type);
+                module.function_info.insert(name.clone(), fi);
 
-        let sig = format!("({}) -> {}", params_str.trim(), ret_str);
-        module
-            .function_signatures
-            .insert(name.clone(), sig.clone());
-
-        let fi = build_function_info(&name, &params_str, Some(&ret_str));
-        module.function_info.insert(name.clone(), fi);
-
-        if exported_names.contains(&name) {
-            if !module.public_functions.contains(&name) {
-                module.public_functions.push(name);
+                if *exported || exported_names.contains(name) {
+                    if !module.public_functions.contains(name) {
+                        module.public_functions.push(name.clone());
+                    }
+                } else if !module.private_functions.contains(name) {
+                    module.private_functions.push(name.clone());
+                }
             }
-        } else if !module.private_functions.contains(&name) {
-            module.private_functions.push(name);
-        }
-    }
+            Decl::Function {
+                name,
+                args,
+                return_type,
+                exported,
+                ..
+            } => {
+                // Skip keywords and struct constructors
+                if name == "if"
+                    || name == "switch"
+                    || name == "export"
+                    || name == "import"
+                    || name == "native"
+                {
+                    continue;
+                }
+                if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                    // This is a struct constructor call in the function position.
+                    // Check if it should be treated as a struct definition.
+                    if !module.type_definitions.contains_key(name) {
+                        let field_infos: Vec<FieldInfo> = args
+                            .iter()
+                            .map(|fa| FieldInfo {
+                                name: fa.name.clone(),
+                                type_repr: fa
+                                    .type_annotation
+                                    .as_ref()
+                                    .map(flow9_type_to_type_repr)
+                                    .unwrap_or(TypeRepr::Infer),
+                                visibility: TypeVisibility::Public,
+                            })
+                            .collect();
 
-    // Extract function definitions: name(args) -> type { body }
-    // or name(args) { body }
-    let fn_def_re =
-        regex::Regex::new(r"(?m)^(\w+)\s*\(([^)]*)\)\s*(?:->\s*(\S+)\s*)?\{")?;
-    for cap in fn_def_re.captures_iter(content) {
-        let name = cap[1].to_string();
+                        let ti = TypeInfo {
+                            name: name.clone(),
+                            kind: TypeKind::Struct,
+                            generics: vec![],
+                            fields: field_infos,
+                            variants: vec![],
+                            trait_impls: vec![],
+                            derives: vec![],
+                        };
+                        module.type_definitions.insert(name.clone(), ti);
+                    }
+                    if (*exported || exported_names.contains(name))
+                        && !module.public_functions.contains(name)
+                    {
+                        module.public_functions.push(name.clone());
+                    }
+                    continue;
+                }
 
-        // Skip keywords and struct-like names
-        if name == "if"
-            || name == "switch"
-            || name == "export"
-            || name == "import"
-            || name == "native"
-        {
-            continue;
-        }
-        // Skip struct constructors (uppercase)
-        if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
-            continue;
-        }
+                // Only add signature/info if we don't already have a type declaration
+                if !module.function_signatures.contains_key(name) {
+                    let sig = build_sig_from_funargs(args, return_type.as_ref());
+                    module.function_signatures.insert(name.clone(), sig);
+                }
 
-        let params_str = cap[2].to_string();
-        let ret_str = cap.get(3).map(|m| m.as_str().trim().to_string());
+                if !module.function_info.contains_key(name) {
+                    let fi = build_fi_from_funargs(name, args, return_type.as_ref());
+                    module.function_info.insert(name.clone(), fi);
+                }
 
-        // Only add if we don't already have a type declaration for this
-        if !module.function_signatures.contains_key(&name) {
-            let sig = match &ret_str {
-                Some(ret) => format!("({}) -> {}", params_str.trim(), ret),
-                None => format!("({})", params_str.trim()),
-            };
-            module.function_signatures.insert(name.clone(), sig);
-        }
-
-        if !module.function_info.contains_key(&name) {
-            let fi = build_function_info(&name, &params_str, ret_str.as_deref());
-            module.function_info.insert(name.clone(), fi);
-        }
-
-        // Determine visibility
-        if exported_names.contains(&name) {
-            if !module.public_functions.contains(&name) {
-                module.public_functions.push(name);
+                if *exported || exported_names.contains(name) {
+                    if !module.public_functions.contains(name) {
+                        module.public_functions.push(name.clone());
+                    }
+                } else if !module.private_functions.contains(name)
+                    && !module.public_functions.contains(name)
+                {
+                    module.private_functions.push(name.clone());
+                }
             }
-        } else if !module.private_functions.contains(&name)
-            && !module.public_functions.contains(&name)
-        {
-            module.private_functions.push(name);
-        }
-    }
+            Decl::Native {
+                name,
+                type_sig,
+                ..
+            } => {
+                // Extract params and return type from the native's type signature
+                match type_sig {
+                    Flow9Type::FnType(params, ret) => {
+                        let params_str: Vec<String> =
+                            params.iter().map(flow9_type_to_string).collect();
+                        let ret_str = flow9_type_to_string(ret);
+                        let sig = format!("({}) -> {}", params_str.join(", "), ret_str);
+                        module.function_signatures.insert(name.clone(), sig);
 
-    // Extract native declarations: native name : (types) -> type = binding;
-    let native_re =
-        regex::Regex::new(r"native\s+(\w+)\s*:\s*\(([^)]*)\)\s*->\s*([^=;]+)\s*=")?;
-    for cap in native_re.captures_iter(content) {
-        let name = cap[1].to_string();
-        let params_str = cap[2].to_string();
-        let ret_str = cap[3].trim().to_string();
+                        let param_infos: Vec<ParamInfo> = params
+                            .iter()
+                            .map(|p| ParamInfo {
+                                name: None,
+                                type_repr: flow9_type_to_type_repr(p),
+                                is_receiver: false,
+                            })
+                            .collect();
+                        let fi = FunctionInfo {
+                            name: name.clone(),
+                            params: param_infos,
+                            return_type: Some(flow9_type_to_type_repr(ret)),
+                            generics: vec![],
+                        };
+                        module.function_info.insert(name.clone(), fi);
+                    }
+                    _ => {
+                        // Non-function native — just record it
+                        let sig = flow9_type_to_string(type_sig);
+                        module.function_signatures.insert(name.clone(), sig);
+                    }
+                }
 
-        let sig = format!("({}) -> {}", params_str.trim(), ret_str);
-        module.function_signatures.insert(name.clone(), sig);
-
-        let fi = build_function_info(&name, &params_str, Some(&ret_str));
-        module.function_info.insert(name.clone(), fi);
-
-        if exported_names.contains(&name) {
-            if !module.public_functions.contains(&name) {
-                module.public_functions.push(name);
+                if exported_names.contains(name) && !module.public_functions.contains(name) {
+                    module.public_functions.push(name.clone());
+                }
             }
-        }
-    }
-
-    // Extract global variable definitions from export block
-    // In flow9, exported variables are: name = expr; inside the export { ... } block
-    {
-        let var_re = regex::Regex::new(r"(?m)^\s*([a-z]\w*)\s*=[^=]").unwrap();
-        for cap in var_re.captures_iter(content) {
-            let name = cap[1].to_string();
-
-            if name == "if" || name == "export" || name == "import" || name == "native" {
-                continue;
+            Decl::Assign {
+                name, exported, ..
+            } => {
+                // Exported assigns that aren't known functions/types are state variables
+                if *exported || exported_names.contains(name) {
+                    if !module.function_signatures.contains_key(name)
+                        && !module.function_info.contains_key(name)
+                        && !module.type_definitions.contains_key(name)
+                        && !module
+                            .type_definitions
+                            .values()
+                            .any(|ti| {
+                                ti.fields.iter().any(|f| f.name == *name)
+                                    || ti.variants.iter().any(|v| v.name == *name)
+                            })
+                        && !module.state_variables.contains(name)
+                    {
+                        module.state_variables.push(name.clone());
+                    }
+                }
             }
-            // Only include if it's in the export block
-            if !exported_names.contains(&name) {
-                continue;
-            }
-            // Skip if already known as a function, type, or struct field
-            if module.function_signatures.contains_key(&name)
-                || module.function_info.contains_key(&name)
-                || module.type_definitions.contains_key(&name)
-                || module.type_definitions.values().any(|ti| {
-                    ti.fields.iter().any(|f| f.name == name)
-                        || ti.variants.iter().any(|v| v.name == name)
-                })
-            {
-                continue;
-            }
-            if !module.state_variables.contains(&name) {
-                module.state_variables.push(name);
+            Decl::VarDecl {
+                name,
+                type_annotation: _,
+                exported,
+                ..
+            } => {
+                if *exported || exported_names.contains(name) {
+                    if !module.state_variables.contains(name) {
+                        module.state_variables.push(name.clone());
+                    }
+                }
             }
         }
     }
 
     Ok(module)
-}
-
-/// Extract names declared in the export { ... } block
-fn extract_exported_names(content: &str) -> HashSet<String> {
-    let mut names = HashSet::new();
-
-    // Find export block
-    let export_start = content.find("export");
-    if export_start.is_none() {
-        return names;
-    }
-    let export_start = export_start.unwrap();
-
-    // Find the opening brace
-    let brace_start = content[export_start..].find('{');
-    if brace_start.is_none() {
-        return names;
-    }
-    let brace_start = export_start + brace_start.unwrap();
-
-    // Find matching closing brace
-    let mut depth = 0;
-    let mut brace_end = brace_start;
-    for (i, ch) in content[brace_start..].char_indices() {
-        match ch {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    brace_end = brace_start + i;
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let export_block = &content[brace_start + 1..brace_end];
-
-    // Extract names from export block
-    // Patterns: name : type;  Name(fields);  Name ::= variants;  Name : (fields);
-    let name_re = regex::Regex::new(r"(?m)^\s*(\w+)").unwrap();
-    for cap in name_re.captures_iter(export_block) {
-        let name = cap[1].to_string();
-        // Skip keywords
-        if name != "native" && name != "import" && name != "export" {
-            names.insert(name);
-        }
-    }
-
-    names
 }
 
 /// Strip // and /* */ comments from a string
