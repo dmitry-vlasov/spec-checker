@@ -7,11 +7,87 @@ use crate::rules::{self, Rule, RulesConfig, Severity as RuleSeverity};
 use crate::spec::{LayerConfig, ModuleSpec};
 use crate::type_formula::{self, TypeEvalContext};
 
+// ─── Spec-Type Constraint Model ──────────────────────────────────────────────
+
+/// The kind of constraint in the spec-type system.
+///
+/// Each kind has its own compatibility relation and verification strategy.
+/// This enum is extensible — new constraint kinds can be added as the
+/// spec-type system grows (e.g., Protocol, Invariant, SmtVerified).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConstraintKind {
+    /// Entity existence and visibility (functions, types, variables exist and are public)
+    Structural,
+    /// Dependency constraints (allowed/forbidden module and external dependencies)
+    Dependency,
+    /// Architectural rules (layer direction, context isolation, stability)
+    Architectural,
+    /// Event existence and completeness
+    Event,
+    /// Type formula constraints (type-level properties via the DSL)
+    TypeConstraint,
+}
+
+impl std::fmt::Display for ConstraintKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConstraintKind::Structural => write!(f, "structural"),
+            ConstraintKind::Dependency => write!(f, "dependency"),
+            ConstraintKind::Architectural => write!(f, "architectural"),
+            ConstraintKind::Event => write!(f, "event"),
+            ConstraintKind::TypeConstraint => write!(f, "type-constraint"),
+        }
+    }
+}
+
+/// The verification tier that decided a constraint result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerificationTier {
+    /// Decided by direct syntactic/structural matching
+    Syntactic,
+    /// Decided by the rules engine expression evaluator
+    RulesEngine,
+    /// Decided by the type formula evaluator
+    TypeFormula,
+}
+
+impl std::fmt::Display for VerificationTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VerificationTier::Syntactic => write!(f, "syntactic"),
+            VerificationTier::RulesEngine => write!(f, "rules-engine"),
+            VerificationTier::TypeFormula => write!(f, "type-formula"),
+        }
+    }
+}
+
+/// Severity of a constraint check result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConstraintSeverity {
+    Error,
+    Warning,
+}
+
+/// A single constraint check result within the spec-type framework.
+#[derive(Debug, Clone)]
+pub struct ConstraintResult {
+    /// What kind of constraint was checked
+    pub kind: ConstraintKind,
+    /// How the result was determined
+    pub tier: VerificationTier,
+    /// Error or warning
+    pub severity: ConstraintSeverity,
+    /// Human-readable message
+    pub message: String,
+}
+
 /// Result of checking a spec against implementation
 #[derive(Debug, Default)]
 pub struct CheckResult {
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
+    /// Typed constraint results for programmatic access
+    pub constraint_results: Vec<ConstraintResult>,
 }
 
 impl CheckResult {
@@ -21,6 +97,40 @@ impl CheckResult {
 
     pub fn warning(&mut self, msg: impl Into<String>) {
         self.warnings.push(msg.into());
+    }
+
+    /// Record a constraint violation with full spec-type metadata
+    fn constraint_error(
+        &mut self,
+        kind: ConstraintKind,
+        tier: VerificationTier,
+        msg: impl Into<String>,
+    ) {
+        let message = msg.into();
+        self.constraint_results.push(ConstraintResult {
+            kind,
+            tier,
+            severity: ConstraintSeverity::Error,
+            message: message.clone(),
+        });
+        self.errors.push(message);
+    }
+
+    /// Record a constraint warning with full spec-type metadata
+    fn constraint_warning(
+        &mut self,
+        kind: ConstraintKind,
+        tier: VerificationTier,
+        msg: impl Into<String>,
+    ) {
+        let message = msg.into();
+        self.constraint_results.push(ConstraintResult {
+            kind,
+            tier,
+            severity: ConstraintSeverity::Warning,
+            message: message.clone(),
+        });
+        self.warnings.push(message);
     }
 
     /// Returns true if there are no errors (used by tests)
@@ -78,7 +188,11 @@ impl SpecChecker {
         self
     }
 
-    /// Check a spec against its implementation
+    /// Check a spec against its implementation.
+    ///
+    /// This is the main entry point for spec-type verification. It collects
+    /// all constraints from the spec and checks each one using the appropriate
+    /// verification strategy for its kind.
     pub fn check(&self, spec: &ModuleSpec) -> Result<CheckResult> {
         let mut result = CheckResult::default();
 
@@ -86,10 +200,14 @@ impl SpecChecker {
         let source_path = self.find_source_file(spec)?;
 
         if source_path.is_none() {
-            result.error(format!(
-                "Could not find source file for module '{}'. Set source_path in spec.",
-                spec.module
-            ));
+            result.constraint_error(
+                ConstraintKind::Structural,
+                VerificationTier::Syntactic,
+                format!(
+                    "Could not find source file for module '{}'. Set source_path in spec.",
+                    spec.module
+                ),
+            );
             return Ok(result);
         }
 
@@ -111,16 +229,20 @@ impl SpecChecker {
         let extracted = match extractor.extract(&source_path) {
             Ok(e) => e,
             Err(e) => {
-                result.error(format!(
-                    "Failed to extract from {}: {}",
-                    source_path.display(),
-                    e
-                ));
+                result.constraint_error(
+                    ConstraintKind::Structural,
+                    VerificationTier::Syntactic,
+                    format!(
+                        "Failed to extract from {}: {}",
+                        source_path.display(),
+                        e
+                    ),
+                );
                 return Ok(result);
             }
         };
 
-        // Run all checks
+        // Run all constraint checks, grouped by kind
         self.check_exposes(spec, &extracted, &mut result);
         self.check_dependencies(spec, &extracted, &mut result);
         self.check_forbidden_deps(spec, &extracted, &mut result);
@@ -141,10 +263,14 @@ impl SpecChecker {
         // Check emits - events the spec says should be defined
         for event in &spec.emits {
             if !extracted.events.contains(event) {
-                result.error(format!(
-                    "Event '{}' is specified in emits but not found in implementation",
-                    event
-                ));
+                result.constraint_error(
+                    ConstraintKind::Event,
+                    VerificationTier::Syntactic,
+                    format!(
+                        "Event '{}' is specified in emits but not found in implementation",
+                        event
+                    ),
+                );
             }
         }
 
@@ -152,17 +278,17 @@ impl SpecChecker {
         if !spec.emits.is_empty() {
             for event in &extracted.events {
                 if !spec.emits.contains(event) {
-                    result.warning(format!(
-                        "Event '{}' is defined in implementation but not in emits spec",
-                        event
-                    ));
+                    result.constraint_warning(
+                        ConstraintKind::Event,
+                        VerificationTier::Syntactic,
+                        format!(
+                            "Event '{}' is defined in implementation but not in emits spec",
+                            event
+                        ),
+                    );
                 }
             }
         }
-
-        // Note: subscribes checking would require analyzing function bodies
-        // to see what events are being listened to - this is more complex
-        // and language-specific, so we skip it for now
     }
 
     /// Check type formula constraints for all exposed entities
@@ -191,10 +317,14 @@ impl SpecChecker {
                 let type_info = extracted.type_definitions.get(name);
 
                 if type_info.is_none() && !expose_spec.type_constraints.is_empty() {
-                    result.error(format!(
-                        "Type '{}' is specified but not found in implementation",
-                        name
-                    ));
+                    result.constraint_error(
+                        ConstraintKind::TypeConstraint,
+                        VerificationTier::Syntactic,
+                        format!(
+                            "Type '{}' is specified but not found in implementation",
+                            name
+                        ),
+                    );
                     continue;
                 }
 
@@ -245,23 +375,35 @@ impl SpecChecker {
                 Ok(formula) => match type_formula::evaluate_formula(&formula, ctx) {
                     Ok(true) => {}
                     Ok(false) => {
-                        result.error(format!(
-                            "'{}' violates type constraint: {}",
-                            entity_name, constraint
-                        ));
+                        result.constraint_error(
+                            ConstraintKind::TypeConstraint,
+                            VerificationTier::TypeFormula,
+                            format!(
+                                "'{}' violates type constraint: {}",
+                                entity_name, constraint
+                            ),
+                        );
                     }
                     Err(e) => {
-                        result.error(format!(
-                            "'{}' type constraint evaluation error for '{}': {}",
-                            entity_name, constraint, e
-                        ));
+                        result.constraint_error(
+                            ConstraintKind::TypeConstraint,
+                            VerificationTier::TypeFormula,
+                            format!(
+                                "'{}' type constraint evaluation error for '{}': {}",
+                                entity_name, constraint, e
+                            ),
+                        );
                     }
                 },
                 Err(e) => {
-                    result.error(format!(
-                        "'{}' type constraint parse error for '{}': {}",
-                        entity_name, constraint, e
-                    ));
+                    result.constraint_error(
+                        ConstraintKind::TypeConstraint,
+                        VerificationTier::TypeFormula,
+                        format!(
+                            "'{}' type constraint parse error for '{}': {}",
+                            entity_name, constraint, e
+                        ),
+                    );
                 }
             }
         }
@@ -280,12 +422,21 @@ impl SpecChecker {
                 rules::check_dependency(spec, target_spec, &self.rules, &self.layer_config);
 
             for violation in violations {
+                let msg = format!("[{}] {}", violation.rule_name, violation.message);
                 match violation.severity {
                     RuleSeverity::Error => {
-                        result.error(format!("[{}] {}", violation.rule_name, violation.message));
+                        result.constraint_error(
+                            ConstraintKind::Architectural,
+                            VerificationTier::RulesEngine,
+                            msg,
+                        );
                     }
                     RuleSeverity::Warning => {
-                        result.warning(format!("[{}] {}", violation.rule_name, violation.message));
+                        result.constraint_warning(
+                            ConstraintKind::Architectural,
+                            VerificationTier::RulesEngine,
+                            msg,
+                        );
                     }
                 }
             }
@@ -306,32 +457,48 @@ impl SpecChecker {
                 // Type entities are checked by check_type_constraints
                 // Here we just verify they exist
                 if !extracted.type_definitions.contains_key(name) {
-                    result.error(format!(
-                        "Type '{}' is specified as exposed but not found in implementation",
-                        name
-                    ));
+                    result.constraint_error(
+                        ConstraintKind::Structural,
+                        VerificationTier::Syntactic,
+                        format!(
+                            "Type '{}' is specified as exposed but not found in implementation",
+                            name
+                        ),
+                    );
                 }
             } else if kind == Some("variable") {
                 // Global variables — check in state_variables
                 if !extracted.state_variables.contains(name) {
-                    result.error(format!(
-                        "Variable '{}' is specified as exposed but not found in implementation",
-                        name
-                    ));
+                    result.constraint_error(
+                        ConstraintKind::Structural,
+                        VerificationTier::Syntactic,
+                        format!(
+                            "Variable '{}' is specified as exposed but not found in implementation",
+                            name
+                        ),
+                    );
                 }
             } else {
                 // Function entities
                 if !extracted.public_functions.contains(name) {
                     if extracted.private_functions.contains(name) {
-                        result.error(format!(
-                            "Function '{}' is specified as exposed but is private/internal in implementation",
-                            name
-                        ));
+                        result.constraint_error(
+                            ConstraintKind::Structural,
+                            VerificationTier::Syntactic,
+                            format!(
+                                "Function '{}' is specified as exposed but is private/internal in implementation",
+                                name
+                            ),
+                        );
                     } else {
-                        result.error(format!(
-                            "Function '{}' is specified as exposed but not found in implementation",
-                            name
-                        ));
+                        result.constraint_error(
+                            ConstraintKind::Structural,
+                            VerificationTier::Syntactic,
+                            format!(
+                                "Function '{}' is specified as exposed but not found in implementation",
+                                name
+                            ),
+                        );
                     }
                 } else {
                     // Check signature if specified (legacy)
@@ -343,10 +510,14 @@ impl SpecChecker {
                                 impl_sig.chars().filter(|c| !c.is_whitespace()).collect();
 
                             if spec_normalized != impl_normalized {
-                                result.warning(format!(
-                                    "Function '{}' signature mismatch:\n  spec: {}\n  impl: {}",
-                                    name, spec_sig, impl_sig
-                                ));
+                                result.constraint_warning(
+                                    ConstraintKind::Structural,
+                                    VerificationTier::Syntactic,
+                                    format!(
+                                        "Function '{}' signature mismatch:\n  spec: {}\n  impl: {}",
+                                        name, spec_sig, impl_sig
+                                    ),
+                                );
                             }
                         }
                     }
@@ -381,10 +552,14 @@ impl SpecChecker {
                 || import.starts_with("alloc::");
 
             if !is_allowed && !is_external && !is_std {
-                result.warning(format!(
-                    "Import '{}' not in depends_on or external_deps",
-                    import
-                ));
+                result.constraint_warning(
+                    ConstraintKind::Dependency,
+                    VerificationTier::Syntactic,
+                    format!(
+                        "Import '{}' not in depends_on or external_deps",
+                        import
+                    ),
+                );
             }
         }
     }
@@ -419,19 +594,27 @@ impl SpecChecker {
         for import in &extracted.imports {
             for forbidden in &spec.forbidden_deps {
                 if import.contains(forbidden) {
-                    result.error(format!(
-                        "Forbidden dependency: '{}' imports '{}' which matches forbidden '{}'",
-                        spec.module, import, forbidden
-                    ));
+                    result.constraint_error(
+                        ConstraintKind::Dependency,
+                        VerificationTier::Syntactic,
+                        format!(
+                            "Forbidden dependency: '{}' imports '{}' which matches forbidden '{}'",
+                            spec.module, import, forbidden
+                        ),
+                    );
                 }
             }
 
             for forbidden in &spec.forbidden_external {
                 if import.contains(forbidden) {
-                    result.error(format!(
-                        "Forbidden external dependency: '{}' imports '{}' which matches forbidden '{}'",
-                        spec.module, import, forbidden
-                    ));
+                    result.constraint_error(
+                        ConstraintKind::Dependency,
+                        VerificationTier::Syntactic,
+                        format!(
+                            "Forbidden external dependency: '{}' imports '{}' which matches forbidden '{}'",
+                            spec.module, import, forbidden
+                        ),
+                    );
                 }
             }
         }
