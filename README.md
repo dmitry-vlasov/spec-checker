@@ -409,7 +409,7 @@ Every check result shows its constraint kind and verification tier:
 |----------|-----------|--------|
 | Rust | syn AST (full type extraction) | Working |
 | Solidity | solc AST + regex fallback | Working |
-| Flow9 | Regex (exports, structs, unions, functions, variables) | Working |
+| Flow9 | Recursive descent parser (full top-level grammar) | Working |
 | TypeScript | - | Planned |
 
 ## Installation
@@ -427,6 +427,37 @@ apt install z3
 brew install z3
 ```
 
+## Configuration
+
+Create `.spec-checker.yaml` in your project root to set defaults:
+
+```yaml
+# .spec-checker.yaml
+llm:
+  # Anthropic (default)
+  endpoint: https://api.anthropic.com
+  model: claude-haiku-4-5-20251001
+  api_key: sk-ant-...          # optional, can use ANTHROPIC_API_KEY env var
+  check: off                    # default mode: off | dry-run | cached-only | full
+
+  # Or use a local LLM (Ollama, vLLM, LM Studio, etc.)
+  # endpoint: http://localhost:11434/v1
+  # model: llama3.1
+  # check: full
+
+rules: rules.yaml              # default rules file
+```
+
+**Resolution order** (each overrides the previous):
+1. Built-in defaults (endpoint=anthropic, model=haiku, check=off)
+2. `.spec-checker.yaml` in project root
+3. Environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `LLM_API_KEY`)
+4. CLI flags (`--llm-endpoint`, `--llm-model`, `--llm-check`, `--llm-api-key`)
+
+The provider is auto-detected from the endpoint URL: `anthropic.com` uses the Anthropic API format, everything else uses the OpenAI-compatible format (works with Ollama, vLLM, LM Studio, LocalAI, llama.cpp server, etc.).
+
+For local LLMs, the API key is optional — most local servers don't require one.
+
 ## Usage
 
 ```bash
@@ -439,8 +470,15 @@ spec-checker check ./specs/checker.spec.yaml -s .
 # With custom rules
 spec-checker check ./specs -s . -r rules.yaml
 
-# With behavioral checks (dry-run)
+# With behavioral checks (dry-run, uses config file defaults)
 spec-checker check ./specs -s . --llm-check dry-run
+
+# With local LLM (overrides config)
+spec-checker check ./specs -s . --llm-check full \
+  --llm-endpoint http://localhost:11434/v1 --llm-model llama3.1
+
+# With explicit Anthropic API key
+ANTHROPIC_API_KEY=sk-ant-... spec-checker check ./specs -s . --llm-check full
 
 # Generate spec skeleton from existing code (with protocol detection)
 spec-checker init --language rust ./src/main.rs

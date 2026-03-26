@@ -418,6 +418,74 @@ impl std::str::FromStr for LlmCheckMode {
     }
 }
 
+/// LLM API provider (auto-detected from endpoint URL)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LlmProvider {
+    /// Anthropic API (api.anthropic.com)
+    Anthropic,
+    /// OpenAI-compatible API (Ollama, vLLM, LM Studio, etc.)
+    OpenAICompatible,
+}
+
+/// Configuration for LLM behavioral checks.
+///
+/// Resolved from: built-in defaults → .spec-checker.yaml → env vars → CLI flags.
+#[derive(Debug, Clone)]
+pub struct LlmConfig {
+    pub endpoint: String,
+    pub model: String,
+    pub api_key: Option<String>,
+    pub check_mode: LlmCheckMode,
+    pub provider: LlmProvider,
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: "https://api.anthropic.com".to_string(),
+            model: "claude-haiku-4-5-20251001".to_string(),
+            api_key: None,
+            check_mode: LlmCheckMode::Off,
+            provider: LlmProvider::Anthropic,
+        }
+    }
+}
+
+impl LlmConfig {
+    /// Detect the provider from the endpoint URL.
+    pub fn detect_provider(endpoint: &str) -> LlmProvider {
+        if endpoint.contains("anthropic.com") {
+            LlmProvider::Anthropic
+        } else {
+            LlmProvider::OpenAICompatible
+        }
+    }
+
+    /// Resolve the API key: config value → env var (based on provider).
+    pub fn resolve_api_key(&mut self) {
+        if self.api_key.is_some() {
+            return;
+        }
+        // Try provider-specific env vars, then generic
+        self.api_key = match self.provider {
+            LlmProvider::Anthropic => std::env::var("ANTHROPIC_API_KEY").ok(),
+            LlmProvider::OpenAICompatible => std::env::var("OPENAI_API_KEY")
+                .or_else(|_| std::env::var("LLM_API_KEY"))
+                .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
+                .ok(),
+        };
+    }
+
+    /// Build the full API URL for chat/messages endpoint.
+    pub fn api_url(&self) -> String {
+        let base = self.endpoint.trim_end_matches('/');
+        match self.provider {
+            LlmProvider::Anthropic => format!("{}/v1/messages", base),
+            LlmProvider::OpenAICompatible => format!("{}/chat/completions", base),
+        }
+    }
+}
+
 /// LLM response from the API
 #[derive(Debug, serde::Deserialize)]
 struct LlmResponse {
@@ -451,29 +519,21 @@ const MAX_RETRIES: u32 = 5;
 const INITIAL_BACKOFF_MS: u64 = 2000;
 
 /// Call the LLM API to verify an invariant, with retry on rate limits.
+/// Supports both Anthropic and OpenAI-compatible endpoints.
 pub async fn llm_verify(
     code: &str,
     invariant: &str,
-    api_key: &str,
-    model: &str,
+    config: &LlmConfig,
 ) -> anyhow::Result<InvariantResult> {
+    let api_key = config.api_key.as_deref().unwrap_or("");
     let client = reqwest::Client::new();
     let prompt = build_prompt(code, invariant);
-
-    let body = serde_json::json!({
-        "model": model,
-        "max_tokens": 256,
-        "messages": [{
-            "role": "user",
-            "content": prompt
-        }]
-    });
+    let url = config.api_url();
 
     let mut last_error = String::new();
 
     for attempt in 0..=MAX_RETRIES {
         if attempt > 0 {
-            // Exponential backoff: 2s, 4s, 8s, 16s, 32s
             let delay = INITIAL_BACKOFF_MS * 2u64.pow(attempt - 1);
             eprintln!(
                 "  [retry {}/{}] Rate limited, waiting {}s...",
@@ -482,18 +542,41 @@ pub async fn llm_verify(
             tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
         }
 
-        let resp = client
-            .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
+        let resp = match config.provider {
+            LlmProvider::Anthropic => {
+                let body = serde_json::json!({
+                    "model": config.model,
+                    "max_tokens": 256,
+                    "messages": [{ "role": "user", "content": prompt }]
+                });
+                client
+                    .post(&url)
+                    .header("x-api-key", api_key)
+                    .header("anthropic-version", "2023-06-01")
+                    .header("content-type", "application/json")
+                    .json(&body)
+                    .send()
+                    .await?
+            }
+            LlmProvider::OpenAICompatible => {
+                let body = serde_json::json!({
+                    "model": config.model,
+                    "max_tokens": 256,
+                    "messages": [{ "role": "user", "content": prompt }]
+                });
+                let mut req = client
+                    .post(&url)
+                    .header("content-type", "application/json");
+                if !api_key.is_empty() {
+                    req = req.header("authorization", format!("Bearer {}", api_key));
+                }
+                req.json(&body).send().await?
+            }
+        };
 
         if resp.status() == 429 {
             last_error = resp.text().await.unwrap_or_default();
-            continue; // retry
+            continue;
         }
 
         if !resp.status().is_success() {
@@ -502,8 +585,7 @@ pub async fn llm_verify(
             anyhow::bail!("LLM API error ({}): {}", status, text);
         }
 
-        // Success — parse the response
-        return parse_llm_response(resp).await;
+        return parse_llm_response(resp, &config.provider).await;
     }
 
     anyhow::bail!(
@@ -513,17 +595,25 @@ pub async fn llm_verify(
     )
 }
 
-/// Parse a successful LLM API response into an InvariantResult
-async fn parse_llm_response(resp: reqwest::Response) -> anyhow::Result<InvariantResult> {
-
+/// Parse a successful LLM API response into an InvariantResult.
+/// Handles both Anthropic and OpenAI response formats.
+async fn parse_llm_response(
+    resp: reqwest::Response,
+    provider: &LlmProvider,
+) -> anyhow::Result<InvariantResult> {
     let api_resp: serde_json::Value = resp.json().await?;
 
-    // Extract text from Anthropic response format
-    let text = api_resp["content"][0]["text"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("Unexpected API response format"))?;
+    // Extract text based on provider format
+    let text = match provider {
+        LlmProvider::Anthropic => api_resp["content"][0]["text"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Unexpected Anthropic response format"))?,
+        LlmProvider::OpenAICompatible => api_resp["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Unexpected OpenAI-compatible response format"))?,
+    };
 
-    // Strip markdown code blocks if present (LLMs often wrap JSON in ```json ... ```)
+    // Strip markdown code blocks if present
     let text = text.trim();
     let text = if text.starts_with("```") {
         let inner = text.trim_start_matches("```json").trim_start_matches("```");
@@ -532,7 +622,6 @@ async fn parse_llm_response(resp: reqwest::Response) -> anyhow::Result<Invariant
         text
     };
 
-    // Parse the JSON response from the LLM
     let llm_resp: LlmResponse = serde_json::from_str(text).map_err(|e| {
         anyhow::anyhow!(
             "Failed to parse LLM response as JSON: {}. Raw response: {}",
@@ -573,10 +662,8 @@ pub struct BehavioralSummary {
 pub async fn check_behavioral(
     spec: &ModuleSpec,
     source_code: &str,
-    mode: &LlmCheckMode,
+    config: &LlmConfig,
     cache_dir: &Path,
-    api_key: Option<&str>,
-    model: &str,
 ) -> BehavioralSummary {
     let invariants = collect_invariants(spec);
     let mut summary = BehavioralSummary::default();
@@ -598,10 +685,8 @@ pub async fn check_behavioral(
                     handle_behavioral_invariant(
                         inv,
                         source_code,
-                        mode,
+                        config,
                         cache_dir,
-                        api_key,
-                        model,
                         &mut summary,
                     )
                     .await;
@@ -611,10 +696,8 @@ pub async fn check_behavioral(
                 handle_behavioral_invariant(
                     inv,
                     source_code,
-                    mode,
+                    config,
                     cache_dir,
-                    api_key,
-                    model,
                     &mut summary,
                 )
                 .await;
@@ -628,15 +711,13 @@ pub async fn check_behavioral(
 async fn handle_behavioral_invariant(
     inv: &ClassifiedInvariant,
     source_code: &str,
-    mode: &LlmCheckMode,
+    config: &LlmConfig,
     cache_dir: &Path,
-    api_key: Option<&str>,
-    model: &str,
     summary: &mut BehavioralSummary,
 ) {
     let key = cache_key(source_code, &inv.text);
 
-    match mode {
+    match &config.check_mode {
         LlmCheckMode::Off => {
             summary.skipped += 1;
         }
@@ -682,22 +763,22 @@ async fn handle_behavioral_invariant(
             }
 
             // Call LLM
-            let Some(api_key) = api_key else {
+            if config.api_key.is_none() && config.provider == LlmProvider::Anthropic {
                 eprintln!(
-                    "  [skip] {} — no ANTHROPIC_API_KEY set",
+                    "  [skip] {} — no API key set (ANTHROPIC_API_KEY or config)",
                     inv.text
                 );
                 summary.skipped += 1;
                 return;
-            };
+            }
 
-            match llm_verify(source_code, &inv.text, api_key, model).await {
+            match llm_verify(source_code, &inv.text, config).await {
                 Ok(result) => {
                     // Cache the result
                     let cached = CachedResult {
                         satisfies: result.satisfies,
                         reasoning: result.reasoning.clone(),
-                        model: model.to_string(),
+                        model: config.model.clone(),
                         timestamp: chrono_now(),
                         code_hash: key.clone(),
                         invariant_hash: key.clone(),

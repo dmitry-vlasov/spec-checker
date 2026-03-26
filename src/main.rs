@@ -50,12 +50,24 @@ enum Commands {
         rules: Option<PathBuf>,
 
         /// LLM behavioral check mode: off, dry-run, cached-only, full
-        #[arg(long, default_value = "off")]
-        llm_check: String,
+        #[arg(long)]
+        llm_check: Option<String>,
 
         /// LLM model to use for behavioral checks
-        #[arg(long, default_value = "claude-haiku-4-5-20251001")]
-        llm_model: String,
+        #[arg(long)]
+        llm_model: Option<String>,
+
+        /// LLM API endpoint URL (default: Anthropic; set for local LLMs)
+        #[arg(long)]
+        llm_endpoint: Option<String>,
+
+        /// LLM API key (overrides config and env vars)
+        #[arg(long)]
+        llm_api_key: Option<String>,
+
+        /// Path to config file (default: .spec-checker.yaml)
+        #[arg(long)]
+        config: Option<PathBuf>,
     },
 
     /// Generate spec skeleton from existing code (file or directory)
@@ -93,7 +105,19 @@ fn main() -> Result<()> {
             rules,
             llm_check,
             llm_model,
-        } => cmd_check(&path, &source, &format, rules.as_ref(), &llm_check, &llm_model),
+            llm_endpoint,
+            llm_api_key,
+            config,
+        } => {
+            let llm_config = load_llm_config(
+                config.as_ref(),
+                llm_check.as_deref(),
+                llm_model.as_deref(),
+                llm_endpoint.as_deref(),
+                llm_api_key.as_deref(),
+            );
+            cmd_check(&path, &source, &format, rules.as_ref(), &llm_config)
+        }
         Commands::Init {
             source,
             language,
@@ -108,12 +132,8 @@ fn cmd_check(
     source_root: &PathBuf,
     _format: &str,
     rules_path: Option<&PathBuf>,
-    llm_check_mode: &str,
-    llm_model: &str,
+    llm_config: &behavioral::LlmConfig,
 ) -> Result<()> {
-    let llm_mode: behavioral::LlmCheckMode = llm_check_mode
-        .parse()
-        .map_err(|e: String| anyhow::anyhow!(e))?;
     println!("{}", "Spec Checker".bold().cyan());
     println!("{}", "=".repeat(40));
     println!();
@@ -235,13 +255,12 @@ fn cmd_check(
     }
 
     // ── Behavioral checks ──────────────────────────────────────────────────
-    if llm_mode != behavioral::LlmCheckMode::Off {
+    if llm_config.check_mode != behavioral::LlmCheckMode::Off {
         println!();
         println!("{}", "Behavioral Checks".bold().cyan());
         println!("{}", "-".repeat(40));
 
         let cache_dir = source_root.join(".spec-cache");
-        let api_key = std::env::var("ANTHROPIC_API_KEY").ok();
 
         let rt = tokio::runtime::Runtime::new()?;
         let mut behavioral_total = behavioral::BehavioralSummary::default();
@@ -262,10 +281,8 @@ fn cmd_check(
             let summary = rt.block_on(behavioral::check_behavioral(
                 spec,
                 &source_code,
-                &llm_mode,
+                llm_config,
                 &cache_dir,
-                api_key.as_deref(),
-                llm_model,
             ));
 
             if summary.static_passed + summary.static_failed + summary.llm_passed
@@ -330,7 +347,7 @@ fn cmd_check(
         println!();
         total_errors += behavioral_total.static_failed + behavioral_total.llm_failed;
 
-        if llm_mode == behavioral::LlmCheckMode::DryRun {
+        if llm_config.check_mode == behavioral::LlmCheckMode::DryRun {
             println!(
                 "{} Behavioral checks in dry-run mode (no LLM calls made)",
                 "ℹ".blue()
@@ -359,6 +376,110 @@ fn cmd_check(
     }
 
     Ok(())
+}
+
+// ─── Config File ─────────────────────────────────────────────────────────────
+
+/// Config file structure (.spec-checker.yaml)
+#[derive(Debug, Default, serde::Deserialize)]
+struct ProjectConfig {
+    #[serde(default)]
+    llm: LlmFileConfig,
+    #[serde(default)]
+    rules: Option<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct LlmFileConfig {
+    #[serde(default)]
+    endpoint: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    check: Option<String>,
+}
+
+/// Load and resolve LlmConfig from: defaults → config file → env vars → CLI flags.
+fn load_llm_config(
+    config_path: Option<&PathBuf>,
+    cli_check: Option<&str>,
+    cli_model: Option<&str>,
+    cli_endpoint: Option<&str>,
+    cli_api_key: Option<&str>,
+) -> behavioral::LlmConfig {
+    let mut config = behavioral::LlmConfig::default();
+
+    // 1. Load config file
+    let file_config = load_project_config(config_path);
+
+    // 2. Apply config file values
+    if let Some(endpoint) = file_config.llm.endpoint {
+        config.endpoint = endpoint;
+    }
+    if let Some(model) = file_config.llm.model {
+        config.model = model;
+    }
+    if let Some(api_key) = file_config.llm.api_key {
+        config.api_key = Some(api_key);
+    }
+    if let Some(check) = file_config.llm.check {
+        if let Ok(mode) = check.parse() {
+            config.check_mode = mode;
+        }
+    }
+
+    // 3. CLI flags override everything
+    if let Some(endpoint) = cli_endpoint {
+        config.endpoint = endpoint.to_string();
+    }
+    if let Some(model) = cli_model {
+        config.model = model.to_string();
+    }
+    if let Some(api_key) = cli_api_key {
+        config.api_key = Some(api_key.to_string());
+    }
+    if let Some(check) = cli_check {
+        if let Ok(mode) = check.parse() {
+            config.check_mode = mode;
+        }
+    }
+
+    // 4. Detect provider from endpoint
+    config.provider = behavioral::LlmConfig::detect_provider(&config.endpoint);
+
+    // 5. Resolve API key from env vars if not set
+    config.resolve_api_key();
+
+    config
+}
+
+fn load_project_config(config_path: Option<&PathBuf>) -> ProjectConfig {
+    // Try explicit path first, then default location
+    let paths_to_try: Vec<PathBuf> = if let Some(p) = config_path {
+        vec![p.clone()]
+    } else {
+        vec![
+            PathBuf::from(".spec-checker.yaml"),
+            PathBuf::from(".spec-checker.yml"),
+        ]
+    };
+
+    for path in paths_to_try {
+        if path.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                match serde_yaml::from_str::<ProjectConfig>(&content) {
+                    Ok(config) => return config,
+                    Err(e) => {
+                        eprintln!("Warning: failed to parse {}: {}", path.display(), e);
+                    }
+                }
+            }
+        }
+    }
+
+    ProjectConfig::default()
 }
 
 fn cmd_init(source: &PathBuf, language: Option<&str>, output: Option<&PathBuf>) -> Result<()> {
