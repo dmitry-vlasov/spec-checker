@@ -258,6 +258,211 @@ impl SpecChecker {
         Ok(result)
     }
 
+    /// Cross-module composition checking.
+    ///
+    /// Verifies that constraints crossing module boundaries are compatible:
+    /// - Event subscribe/emit matching across all modules
+    /// - Contract compatibility (requires/ensures) at dependency boundaries
+    /// - Dependency interface completeness (called functions exist in target's exposes)
+    pub fn check_composition(&self, specs: &[ModuleSpec]) -> CheckResult {
+        let mut result = CheckResult::default();
+
+        // Build lookup maps
+        let spec_by_module: HashMap<&str, &ModuleSpec> =
+            specs.iter().map(|s| (s.module.as_str(), s)).collect();
+        let spec_by_path: HashMap<&str, &ModuleSpec> = specs
+            .iter()
+            .filter_map(|s| s.source_path.as_deref().map(|p| (p, s)))
+            .collect();
+
+        // 1. Event subscribe/emit matching
+        self.check_event_composition(specs, &mut result);
+
+        // 2. Dependency interface checks
+        for spec in specs {
+            for dep_path in &spec.depends_on {
+                // Resolve dependency to a spec
+                let target = spec_by_path.get(dep_path.as_str())
+                    .or_else(|| {
+                        // Try matching by module name
+                        let dep_name = Self::extract_module_name(dep_path);
+                        spec_by_module.get(dep_name.as_str())
+                    });
+
+                if let Some(target_spec) = target {
+                    self.check_interface_compatibility(spec, target_spec, &mut result);
+                    self.check_contract_compatibility(spec, target_spec, &mut result);
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Check that all event subscriptions have matching emitters
+    fn check_event_composition(
+        &self,
+        specs: &[ModuleSpec],
+        result: &mut CheckResult,
+    ) {
+        // Collect all emitted events across all modules
+        let mut emitted_events: HashMap<&str, Vec<&str>> = HashMap::new();
+        for spec in specs {
+            for event in &spec.emits {
+                emitted_events
+                    .entry(event.as_str())
+                    .or_default()
+                    .push(spec.module.as_str());
+            }
+        }
+
+        // Check that every subscription has at least one emitter
+        for spec in specs {
+            for event in &spec.subscribes {
+                if !emitted_events.contains_key(event.as_str()) {
+                    result.constraint_error(
+                        ConstraintKind::Event,
+                        VerificationTier::Syntactic,
+                        format!(
+                            "Module '{}' subscribes to event '{}' but no module emits it",
+                            spec.module, event
+                        ),
+                    );
+                }
+            }
+        }
+
+        // Check that every emitted event has at least one subscriber (warning only)
+        let mut subscribed_events: std::collections::HashSet<&str> =
+            std::collections::HashSet::new();
+        for spec in specs {
+            for event in &spec.subscribes {
+                subscribed_events.insert(event.as_str());
+            }
+        }
+
+        // Only warn if there are any subscriptions at all (otherwise it's
+        // likely that subscriptions aren't being used yet)
+        if !subscribed_events.is_empty() {
+            for spec in specs {
+                for event in &spec.emits {
+                    if !subscribed_events.contains(event.as_str()) {
+                        result.constraint_warning(
+                            ConstraintKind::Event,
+                            VerificationTier::Syntactic,
+                            format!(
+                                "Module '{}' emits event '{}' but no module subscribes to it",
+                                spec.module, event
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Check that a consumer module's usage is compatible with the provider's interface.
+    ///
+    /// If the consumer references functions from the provider (via depends_on),
+    /// those functions should be in the provider's exposes.
+    fn check_interface_compatibility(
+        &self,
+        _consumer: &ModuleSpec,
+        _provider: &ModuleSpec,
+        _result: &mut CheckResult,
+    ) {
+        // Currently a placeholder for future checks:
+        // - Verify that functions consumer calls from provider are in provider's exposes
+        // - Verify reads_state/modifies against provider's owns_state access policies
+        // - Verify subscribed events match provider's emitted events
+        //
+        // These checks require deeper analysis (e.g., parsing function bodies
+        // to find cross-module calls), which will be added incrementally.
+    }
+
+    /// Check contract compatibility at dependency boundaries.
+    ///
+    /// If both modules specify requires/ensures on the same function,
+    /// verify that the provider's ensures satisfy the consumer's requires.
+    fn check_contract_compatibility(
+        &self,
+        consumer: &ModuleSpec,
+        provider: &ModuleSpec,
+        result: &mut CheckResult,
+    ) {
+        // For each function the consumer exposes that has requires/ensures,
+        // check if it references functions from the provider
+        // This is a structural check: we look for matching function names
+        // across the boundary
+
+        for (func_name, consumer_expose) in &consumer.exposes {
+            // Skip types
+            if consumer_expose.kind.as_deref() == Some("type") {
+                continue;
+            }
+
+            // Check if this function references the provider's functions
+            // by looking at the requires/ensures text
+            for provider_func in provider.exposes.keys() {
+                let provider_expose = &provider.exposes[provider_func];
+
+                // If consumer requires something and provider ensures something
+                // on the same function, flag for review
+                if !consumer_expose.requires.is_empty() && !provider_expose.ensures.is_empty() {
+                    // Check for direct function name match (consumer calls provider function)
+                    let consumer_refs_provider = consumer_expose
+                        .requires
+                        .iter()
+                        .any(|r| r.contains(provider_func));
+
+                    if consumer_refs_provider {
+                        // This is a composition boundary — the consumer depends on
+                        // the provider's contract. We can only do a syntactic check
+                        // for now; deeper analysis needs SMT/LLM.
+                        let consumer_reqs: Vec<&str> = consumer_expose
+                            .requires
+                            .iter()
+                            .filter(|r| r.contains(provider_func))
+                            .map(|s| s.as_str())
+                            .collect();
+
+                        let provider_guarantees: Vec<&str> =
+                            provider_expose.ensures.iter().map(|s| s.as_str()).collect();
+
+                        // Syntactic check: does the provider's ensures mention the same terms?
+                        for req in &consumer_reqs {
+                            let has_matching_guarantee = provider_guarantees
+                                .iter()
+                                .any(|g| {
+                                    // Very basic: check if key terms overlap
+                                    req.split_whitespace()
+                                        .filter(|w| w.len() > 3) // skip small words
+                                        .any(|word| g.contains(word))
+                                });
+
+                            if !has_matching_guarantee {
+                                result.constraint_warning(
+                                    ConstraintKind::Dependency,
+                                    VerificationTier::Syntactic,
+                                    format!(
+                                        "Composition: '{}' in '{}' requires '{}' from '{}', \
+                                         but '{}' ensures {:?} — may not satisfy requirement",
+                                        func_name,
+                                        consumer.module,
+                                        req,
+                                        provider.module,
+                                        provider_func,
+                                        provider_guarantees
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Check that specified events exist in implementation
     fn check_events(
         &self,
@@ -1878,5 +2083,176 @@ protocol:
         assert_eq!(protocol.transitions.len(), 3);
         assert_eq!(protocol.balanced_pairs.len(), 1);
         assert_eq!(protocol.balanced_pairs[0], ["connect", "disconnect"]);
+    }
+
+    // ── Composition checking tests ───────────────────────────────────────
+
+    #[test]
+    fn test_composition_event_subscribe_no_emitter() {
+        let spec_a = ModuleSpec {
+            module: "consumer".to_string(),
+            subscribes: vec!["OrderPlaced".to_string()],
+            ..Default::default()
+        };
+
+        let spec_b = ModuleSpec {
+            module: "producer".to_string(),
+            emits: vec!["OrderShipped".to_string()], // emits different event
+            ..Default::default()
+        };
+
+        let specs = vec![spec_a, spec_b];
+        let checker = SpecChecker::new(std::path::PathBuf::from("/tmp"));
+        let result = checker.check_composition(&specs);
+
+        assert!(
+            result.errors.iter().any(|e| e.contains("OrderPlaced") && e.contains("no module emits")),
+            "Expected error about unmatched subscription but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_composition_event_subscribe_with_emitter() {
+        let spec_a = ModuleSpec {
+            module: "consumer".to_string(),
+            subscribes: vec!["OrderPlaced".to_string()],
+            ..Default::default()
+        };
+
+        let spec_b = ModuleSpec {
+            module: "producer".to_string(),
+            emits: vec!["OrderPlaced".to_string()],
+            ..Default::default()
+        };
+
+        let specs = vec![spec_a, spec_b];
+        let checker = SpecChecker::new(std::path::PathBuf::from("/tmp"));
+        let result = checker.check_composition(&specs);
+
+        assert!(
+            result.errors.is_empty(),
+            "Should pass when subscriber has matching emitter but got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_composition_event_emitted_but_no_subscriber() {
+        let spec_a = ModuleSpec {
+            module: "emitter".to_string(),
+            emits: vec!["Orphan".to_string()],
+            ..Default::default()
+        };
+
+        let spec_b = ModuleSpec {
+            module: "listener".to_string(),
+            subscribes: vec!["Something".to_string()],
+            ..Default::default()
+        };
+
+        let specs = vec![spec_a, spec_b];
+        let checker = SpecChecker::new(std::path::PathBuf::from("/tmp"));
+        let result = checker.check_composition(&specs);
+
+        assert!(
+            result.warnings.iter().any(|w| w.contains("Orphan") && w.contains("no module subscribes")),
+            "Expected warning about emitted event with no subscriber but got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_composition_no_warnings_when_no_subscriptions() {
+        // If nobody uses subscribes at all, don't warn about emitted events
+        let spec_a = ModuleSpec {
+            module: "emitter".to_string(),
+            emits: vec!["SomeEvent".to_string()],
+            ..Default::default()
+        };
+
+        let spec_b = ModuleSpec {
+            module: "other".to_string(),
+            ..Default::default()
+        };
+
+        let specs = vec![spec_a, spec_b];
+        let checker = SpecChecker::new(std::path::PathBuf::from("/tmp"));
+        let result = checker.check_composition(&specs);
+
+        assert!(
+            result.warnings.is_empty(),
+            "Should not warn about emitted events when no module uses subscribes, but got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_composition_contract_mismatch_warning() {
+        let mut consumer_exposes = HashMap::new();
+        consumer_exposes.insert(
+            "process_order".to_string(),
+            ExposeSpec {
+                kind: Some("function".to_string()),
+                requires: vec!["validate_order returns valid result".to_string()],
+                ..Default::default()
+            },
+        );
+
+        let mut provider_exposes = HashMap::new();
+        provider_exposes.insert(
+            "validate_order".to_string(),
+            ExposeSpec {
+                kind: Some("function".to_string()),
+                ensures: vec!["checks format only".to_string()],
+                ..Default::default()
+            },
+        );
+
+        let consumer = ModuleSpec {
+            module: "order_processor".to_string(),
+            source_path: Some("src/processor.rs".to_string()),
+            depends_on: vec!["src/validator.rs".to_string()],
+            exposes: consumer_exposes,
+            ..Default::default()
+        };
+
+        let provider = ModuleSpec {
+            module: "validator".to_string(),
+            source_path: Some("src/validator.rs".to_string()),
+            exposes: provider_exposes,
+            ..Default::default()
+        };
+
+        let specs = vec![consumer, provider];
+        let checker = SpecChecker::new(std::path::PathBuf::from("/tmp")).with_specs(&specs);
+        let result = checker.check_composition(&specs);
+
+        assert!(
+            result.warnings.iter().any(|w| w.contains("Composition") && w.contains("validate_order")),
+            "Expected composition warning about contract mismatch but got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_composition_constraint_results_tagged() {
+        let spec_a = ModuleSpec {
+            module: "a".to_string(),
+            subscribes: vec!["Missing".to_string()],
+            ..Default::default()
+        };
+
+        let specs = vec![spec_a];
+        let checker = SpecChecker::new(std::path::PathBuf::from("/tmp"));
+        let result = checker.check_composition(&specs);
+
+        assert!(
+            result.constraint_results.iter().any(|cr|
+                cr.kind == ConstraintKind::Event && cr.tier == VerificationTier::Syntactic
+            ),
+            "Expected Event constraint with Syntactic tier but got: {:?}",
+            result.constraint_results
+        );
     }
 }

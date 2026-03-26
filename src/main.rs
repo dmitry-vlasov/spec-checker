@@ -172,6 +172,27 @@ fn cmd_check(
         println!();
     }
 
+    // ── Composition checks (cross-module) ──────────────────────────────────
+    if specs.len() > 1 {
+        let composition_result = checker.check_composition(&specs);
+
+        if !composition_result.errors.is_empty() || !composition_result.warnings.is_empty() {
+            println!("{}", "Composition Checks".bold().cyan());
+
+            for error in &composition_result.errors {
+                println!("  {} {}", "✗".red(), error);
+                total_errors += 1;
+            }
+
+            for warning in &composition_result.warnings {
+                println!("  {} {}", "⚠".yellow(), warning);
+                total_warnings += 1;
+            }
+
+            println!();
+        }
+    }
+
     // ── Behavioral checks ──────────────────────────────────────────────────
     if llm_mode != behavioral::LlmCheckMode::Off {
         println!();
