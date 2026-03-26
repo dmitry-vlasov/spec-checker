@@ -782,6 +782,10 @@ pub async fn check_behavioral(
     summary
 }
 
+/// Cooldown between consecutive local LLM calls (seconds).
+/// Prevents GPU thermal throttling on consumer hardware.
+const LOCAL_LLM_COOLDOWN_SECS: u64 = 3;
+
 async fn handle_behavioral_invariant(
     inv: &ClassifiedInvariant,
     source_code: &str,
@@ -841,6 +845,8 @@ async fn handle_behavioral_invariant(
                         summary.skipped += 1;
                     }
                 }
+                // Cooldown between local LLM calls to prevent GPU overheating
+                tokio::time::sleep(std::time::Duration::from_secs(LOCAL_LLM_COOLDOWN_SECS)).await;
             } else {
                 // No local LLM — just print estimate
                 let tokens = estimate_tokens(source_code, &inv.text);
@@ -904,6 +910,11 @@ async fn handle_behavioral_invariant(
                     };
                     let _ = write_cache(cache_dir, &key, &cached);
 
+                    // Cooldown between local LLM calls to prevent GPU overheating
+                    if config.is_ollama() {
+                        tokio::time::sleep(std::time::Duration::from_secs(LOCAL_LLM_COOLDOWN_SECS)).await;
+                    }
+
                     if result.satisfies {
                         summary.llm_passed += 1;
                     } else {
@@ -916,6 +927,10 @@ async fn handle_behavioral_invariant(
                 Err(e) => {
                     eprintln!("  [error] {} — LLM call failed: {}", inv.text, e);
                     summary.skipped += 1;
+                    // Cooldown even on error for local models
+                    if config.is_ollama() {
+                        tokio::time::sleep(std::time::Duration::from_secs(LOCAL_LLM_COOLDOWN_SECS)).await;
+                    }
                 }
             }
         }
