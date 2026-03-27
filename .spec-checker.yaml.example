@@ -20,4 +20,12 @@ llm:
   #   endpoint: http://localhost:11434/v1
   #   model: qwen3.5:9b
 
+  # Cooldown between local LLM calls in seconds (default: 10)
+  # Prevents GPU thermal throttling on consumer hardware.
+  # cooldown_secs: 10
+
+  # Context window size for Ollama models (default: 8192)
+  # Higher values allow larger source files but use more VRAM.
+  # context_size: 8192
+
 # rules: rules.yaml             # custom rules file

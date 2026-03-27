@@ -402,6 +402,12 @@ struct LlmFileConfig {
     /// Local LLM for dry-run preview checks
     #[serde(default)]
     local: Option<LocalLlmFileConfig>,
+    /// Cooldown between local LLM calls in seconds (default: 10)
+    #[serde(default)]
+    cooldown_secs: Option<u64>,
+    /// Context window size for Ollama models (default: 8192)
+    #[serde(default)]
+    context_size: Option<u32>,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -445,6 +451,12 @@ fn load_llm_config(
             endpoint: local.endpoint,
             model: local.model,
         });
+    }
+    if let Some(cooldown) = file_config.llm.cooldown_secs {
+        config.cooldown_secs = cooldown;
+    }
+    if let Some(ctx) = file_config.llm.context_size {
+        config.context_size = ctx;
     }
 
     // 3. CLI flags override everything

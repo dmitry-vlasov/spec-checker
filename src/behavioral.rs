@@ -441,6 +441,11 @@ pub struct LlmConfig {
     /// When set and reachable, dry-run mode calls the local LLM
     /// instead of just printing token estimates.
     pub local: Option<LocalLlmConfig>,
+    /// Cooldown between consecutive local LLM calls (seconds).
+    /// Prevents GPU thermal throttling on consumer hardware.
+    pub cooldown_secs: u64,
+    /// Context window size for Ollama models.
+    pub context_size: u32,
 }
 
 /// Configuration for a local LLM used in dry-run preview mode.
@@ -459,6 +464,8 @@ impl Default for LlmConfig {
             check_mode: LlmCheckMode::Off,
             provider: LlmProvider::Anthropic,
             local: None,
+            cooldown_secs: DEFAULT_LOCAL_LLM_COOLDOWN_SECS,
+            context_size: DEFAULT_OLLAMA_NUM_CTX,
         }
     }
 }
@@ -473,6 +480,8 @@ impl LocalLlmConfig {
             check_mode: LlmCheckMode::Full,
             provider: LlmProvider::OpenAICompatible,
             local: None,
+            cooldown_secs: DEFAULT_LOCAL_LLM_COOLDOWN_SECS,
+            context_size: DEFAULT_OLLAMA_NUM_CTX,
         }
     }
 }
@@ -617,7 +626,7 @@ pub async fn llm_verify(
                     serde_json::json!({
                         "model": config.model,
                         "stream": false,
-                        "options": { "num_ctx": 32768 },
+                        "options": { "num_ctx": config.context_size },
                         "messages": [{ "role": "user", "content": prompt }]
                     })
                 } else {
@@ -782,9 +791,12 @@ pub async fn check_behavioral(
     summary
 }
 
-/// Cooldown between consecutive local LLM calls (seconds).
+/// Default cooldown between consecutive local LLM calls (seconds).
 /// Prevents GPU thermal throttling on consumer hardware.
-const LOCAL_LLM_COOLDOWN_SECS: u64 = 3;
+const DEFAULT_LOCAL_LLM_COOLDOWN_SECS: u64 = 10;
+
+/// Default context window size for Ollama models.
+const DEFAULT_OLLAMA_NUM_CTX: u32 = 8192;
 
 async fn handle_behavioral_invariant(
     inv: &ClassifiedInvariant,
@@ -846,7 +858,7 @@ async fn handle_behavioral_invariant(
                     }
                 }
                 // Cooldown between local LLM calls to prevent GPU overheating
-                tokio::time::sleep(std::time::Duration::from_secs(LOCAL_LLM_COOLDOWN_SECS)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(config.cooldown_secs)).await;
             } else {
                 // No local LLM — just print estimate
                 let tokens = estimate_tokens(source_code, &inv.text);
@@ -912,7 +924,7 @@ async fn handle_behavioral_invariant(
 
                     // Cooldown between local LLM calls to prevent GPU overheating
                     if config.is_ollama() {
-                        tokio::time::sleep(std::time::Duration::from_secs(LOCAL_LLM_COOLDOWN_SECS)).await;
+                        tokio::time::sleep(std::time::Duration::from_secs(config.cooldown_secs)).await;
                     }
 
                     if result.satisfies {
@@ -929,7 +941,7 @@ async fn handle_behavioral_invariant(
                     summary.skipped += 1;
                     // Cooldown even on error for local models
                     if config.is_ollama() {
-                        tokio::time::sleep(std::time::Duration::from_secs(LOCAL_LLM_COOLDOWN_SECS)).await;
+                        tokio::time::sleep(std::time::Duration::from_secs(config.cooldown_secs)).await;
                     }
                 }
             }
