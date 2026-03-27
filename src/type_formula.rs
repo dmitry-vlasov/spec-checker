@@ -226,6 +226,10 @@ fn tokenize(input: &str) -> Result<Vec<Token>, ParseError> {
                 if i < chars.len() && chars[i] == '<' {
                     let type_str = parse_type_literal_from(&chars, start, &mut i)?;
                     tokens.push(Token::TypeLit(type_str));
+                } else if ident == "fn" && i < chars.len() && chars[i] == '(' {
+                    // Function type literal: fn(A, B) -> R
+                    let type_str = parse_fn_type_literal(&chars, start, &mut i)?;
+                    tokens.push(Token::TypeLit(type_str));
                 } else {
                     tokens.push(Token::Ident(ident));
                 }
@@ -239,6 +243,15 @@ fn tokenize(input: &str) -> Result<Vec<Token>, ParseError> {
                 // Slice/array type literal: [u8], [u8; 32]
                 let type_str = parse_bracket_type_literal(&chars, &mut i)?;
                 tokens.push(Token::TypeLit(type_str));
+            }
+            '?' => {
+                // Flow9 type variables: ?, ??, ???
+                let start = i;
+                while i < chars.len() && chars[i] == '?' {
+                    i += 1;
+                }
+                let tv: String = chars[start..i].iter().collect();
+                tokens.push(Token::TypeLit(tv));
             }
             c => {
                 return Err(ParseError {
@@ -254,6 +267,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>, ParseError> {
 
 /// Parse a type literal starting with an identifier followed by `<...>`
 /// e.g., `Vec<String>`, `Result<T, E>`, `HashMap<String, Vec<u8>>`
+/// Also handles `->` arrows inside angle brackets (e.g., `Array<fn(X) -> Y>`)
 fn parse_type_literal_from(chars: &[char], start: usize, i: &mut usize) -> Result<String, ParseError> {
     // Consume the identifier part (already consumed by caller up to `<`)
     // Then consume balanced <> brackets
@@ -268,10 +282,15 @@ fn parse_type_literal_from(chars: &[char], start: usize, i: &mut usize) -> Resul
                 *i += 1;
             }
             '>' => {
-                depth -= 1;
-                *i += 1;
-                if depth == 0 {
-                    break;
+                // Check if this is part of `->` (not a closing bracket)
+                if *i > 0 && chars[*i - 1] == '-' {
+                    *i += 1;
+                } else {
+                    depth -= 1;
+                    *i += 1;
+                    if depth == 0 {
+                        break;
+                    }
                 }
             }
             _ => *i += 1,
@@ -286,6 +305,96 @@ fn parse_type_literal_from(chars: &[char], start: usize, i: &mut usize) -> Resul
     }
 
     let s: String = chars[lit_start..*i].iter().collect();
+    Ok(s)
+}
+
+/// Parse a function type literal: `fn(A, B) -> R`
+/// Starts at "fn", consumes through the return type.
+fn parse_fn_type_literal(chars: &[char], start: usize, i: &mut usize) -> Result<String, ParseError> {
+    // *i is at '(' (we already consumed "fn")
+    let paren_start = *i;
+    let mut depth = 0;
+    while *i < chars.len() {
+        match chars[*i] {
+            '(' => { depth += 1; *i += 1; }
+            ')' => { depth -= 1; *i += 1; if depth == 0 { break; } }
+            _ => *i += 1,
+        }
+    }
+    if depth != 0 {
+        return Err(ParseError {
+            message: "Unbalanced parentheses in fn type".into(),
+            position: paren_start,
+        });
+    }
+
+    // Skip whitespace
+    while *i < chars.len() && chars[*i].is_whitespace() {
+        *i += 1;
+    }
+
+    // Check for `->` return type
+    if *i + 1 < chars.len() && chars[*i] == '-' && chars[*i + 1] == '>' {
+        *i += 2; // skip `->`
+        // Skip whitespace
+        while *i < chars.len() && chars[*i].is_whitespace() {
+            *i += 1;
+        }
+        // Consume return type: could be `()`, `?`, `??`, identifier, `Type<A>`, `[T]`, `fn(...) -> R`
+        if *i < chars.len() {
+            match chars[*i] {
+                '(' => {
+                    // Unit `()` or tuple
+                    let ret_start = *i;
+                    let mut d = 0;
+                    while *i < chars.len() {
+                        match chars[*i] {
+                            '(' => { d += 1; *i += 1; }
+                            ')' => { d -= 1; *i += 1; if d == 0 { break; } }
+                            _ => *i += 1,
+                        }
+                    }
+                    if d != 0 {
+                        return Err(ParseError {
+                            message: "Unbalanced parentheses in fn return type".into(),
+                            position: ret_start,
+                        });
+                    }
+                }
+                '[' => {
+                    // Array/slice type
+                    parse_bracket_type_literal(chars, i)?;
+                }
+                '?' => {
+                    // Flow9 type variable
+                    while *i < chars.len() && chars[*i] == '?' {
+                        *i += 1;
+                    }
+                }
+                c if c.is_alphanumeric() || c == '_' => {
+                    // Named type, possibly with generics
+                    while *i < chars.len() && (chars[*i].is_alphanumeric() || chars[*i] == '_') {
+                        *i += 1;
+                    }
+                    // If followed by <, consume balanced <>
+                    if *i < chars.len() && chars[*i] == '<' {
+                        let mut d = 0;
+                        while *i < chars.len() {
+                            match chars[*i] {
+                                '<' => { d += 1; *i += 1; }
+                                '>' if *i > 0 && chars[*i - 1] == '-' => { *i += 1; }
+                                '>' => { d -= 1; *i += 1; if d == 0 { break; } }
+                                _ => *i += 1,
+                            }
+                        }
+                    }
+                }
+                _ => {} // No return type consumed; will parse as Unit
+            }
+        }
+    }
+
+    let s: String = chars[start..*i].iter().collect();
     Ok(s)
 }
 
@@ -319,14 +428,23 @@ fn parse_ref_type_literal(chars: &[char], i: &mut usize) -> Result<String, Parse
         while *i < chars.len() && (chars[*i].is_alphanumeric() || chars[*i] == '_') {
             *i += 1;
         }
-        // If followed by <, consume balanced <>
+        // If followed by <, consume balanced <> (handling `->` arrows)
         if *i < chars.len() && chars[*i] == '<' {
             let inner_start = *i;
             let mut depth = 0;
             while *i < chars.len() {
                 match chars[*i] {
                     '<' => { depth += 1; *i += 1; }
-                    '>' => { depth -= 1; *i += 1; if depth == 0 { break; } }
+                    '>' => {
+                        // Skip `>` that is part of `->` arrow
+                        if *i > 0 && chars[*i - 1] == '-' {
+                            *i += 1;
+                        } else {
+                            depth -= 1;
+                            *i += 1;
+                            if depth == 0 { break; }
+                        }
+                    }
                     _ => *i += 1,
                 }
             }
@@ -815,6 +933,10 @@ pub fn parse_type_repr_from_str(s: &str) -> Result<TypeRepr, ParseError> {
     if s == "_" {
         return Ok(TypeRepr::Infer);
     }
+    // Flow9 type variables: ?, ??, ???
+    if !s.is_empty() && s.chars().all(|c| c == '?') {
+        return Ok(TypeRepr::Named(s.to_string()));
+    }
 
     // Reference types
     if s.starts_with('&') {
@@ -908,14 +1030,20 @@ pub fn parse_type_repr_from_str(s: &str) -> Result<TypeRepr, ParseError> {
     Ok(TypeRepr::Named(s.to_string()))
 }
 
-/// Find the position of the top-level `<` in a type string
+/// Find the position of the top-level `<` in a type string.
+/// Skips `<` inside parentheses and distinguishes `->` from `>`.
 fn find_angle_bracket(s: &str) -> Option<usize> {
     let mut depth_paren = 0i32;
-    for (i, c) in s.char_indices() {
+    let chars: Vec<char> = s.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
         match c {
             '(' => depth_paren += 1,
             ')' => depth_paren -= 1,
-            '<' if depth_paren == 0 => return Some(i),
+            '<' if depth_paren == 0 => {
+                // Make sure this isn't part of `<=` or similar — it should start a generic
+                // A real angle bracket for generics is preceded by an identifier
+                return Some(i);
+            }
             _ => {}
         }
     }
@@ -943,7 +1071,8 @@ fn find_matching_paren(s: &str, open: usize) -> Result<usize, ParseError> {
     })
 }
 
-/// Split comma-separated type arguments, respecting `<>`, `()`, `[]` nesting
+/// Split comma-separated type arguments, respecting `<>`, `()`, `[]` nesting.
+/// Correctly handles `->` arrows (the `>` in `->` is not an angle bracket).
 fn split_type_args(s: &str) -> Result<Vec<String>, ParseError> {
     let mut parts = Vec::new();
     let mut current = String::new();
@@ -951,10 +1080,21 @@ fn split_type_args(s: &str) -> Result<Vec<String>, ParseError> {
     let mut depth_paren = 0i32;
     let mut depth_bracket = 0i32;
 
-    for c in s.chars() {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
         match c {
             '<' => { depth_angle += 1; current.push(c); }
-            '>' => { depth_angle -= 1; current.push(c); }
+            '>' => {
+                // Check if this `>` is part of `->` (not closing angle bracket)
+                if i > 0 && chars[i - 1] == '-' {
+                    current.push(c);
+                } else {
+                    depth_angle -= 1;
+                    current.push(c);
+                }
+            }
             '(' => { depth_paren += 1; current.push(c); }
             ')' => { depth_paren -= 1; current.push(c); }
             '[' => { depth_bracket += 1; current.push(c); }
@@ -965,6 +1105,7 @@ fn split_type_args(s: &str) -> Result<Vec<String>, ParseError> {
             }
             _ => current.push(c),
         }
+        i += 1;
     }
 
     let last = current.trim().to_string();
@@ -1753,5 +1894,154 @@ mod tests {
         // Also still works with explicit reference
         let f = parse_formula("equals(param(spec), &ModuleSpec)").unwrap();
         assert!(evaluate_formula(&f, &ctx).unwrap());
+    }
+
+    // ── Flow9 type syntax support ────────────────────────────────────────────
+
+    #[test]
+    fn parse_flow9_type_variable() {
+        let f = parse_formula("equals(return, ?)").unwrap();
+        match &f {
+            Formula::Pred(Predicate::Equals(_, TypeExpr::Literal(TypeRepr::Named(n)))) => {
+                assert_eq!(n, "?");
+            }
+            other => panic!("Expected equals with ? type, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_flow9_double_type_variable() {
+        let f = parse_formula("equals(return, ??)").unwrap();
+        match &f {
+            Formula::Pred(Predicate::Equals(_, TypeExpr::Literal(TypeRepr::Named(n)))) => {
+                assert_eq!(n, "??");
+            }
+            other => panic!("Expected equals with ?? type, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_flow9_fn_arrow_type() {
+        // fn(string) -> ()
+        let f = parse_formula("equals(param(println), fn(string) -> ())").unwrap();
+        match &f {
+            Formula::Pred(Predicate::Equals(_, TypeExpr::Literal(repr))) => {
+                match repr {
+                    TypeRepr::FnPointer { params, ret } => {
+                        assert_eq!(params.len(), 1);
+                        assert_eq!(**ret, TypeRepr::Unit);
+                    }
+                    other => panic!("Expected FnPointer, got {:?}", other),
+                }
+            }
+            other => panic!("Expected equals, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_flow9_fn_returning_type_var() {
+        // fn(?) -> ()
+        let f = parse_formula("equals(return, fn(?) -> ())").unwrap();
+        match &f {
+            Formula::Pred(Predicate::Equals(_, TypeExpr::Literal(repr))) => {
+                match repr {
+                    TypeRepr::FnPointer { params, ret } => {
+                        assert_eq!(params[0], TypeRepr::Named("?".to_string()));
+                        assert_eq!(**ret, TypeRepr::Unit);
+                    }
+                    other => panic!("Expected FnPointer, got {:?}", other),
+                }
+            }
+            other => panic!("Expected equals, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_flow9_generic_with_fn_arrow() {
+        // Array<fn(RuEnv) -> ()> — the `>` in `->` must not close the `<`
+        let f = parse_formula("equals(param(jobs), Array<fn(RuEnv) -> ()>)").unwrap();
+        match &f {
+            Formula::Pred(Predicate::Equals(_, TypeExpr::Literal(repr))) => {
+                match repr {
+                    TypeRepr::Applied(base, args) => {
+                        assert_eq!(**base, TypeRepr::Named("Array".to_string()));
+                        assert_eq!(args.len(), 1);
+                        match &args[0] {
+                            TypeRepr::FnPointer { params, ret } => {
+                                assert_eq!(params[0], TypeRepr::Named("RuEnv".to_string()));
+                                assert_eq!(**ret, TypeRepr::Unit);
+                            }
+                            other => panic!("Expected FnPointer inside Array, got {:?}", other),
+                        }
+                    }
+                    other => panic!("Expected Applied, got {:?}", other),
+                }
+            }
+            other => panic!("Expected equals, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_flow9_generic_with_fn_arrow_and_type_var() {
+        // Array<fn(RuEnv) -> ?> — combines both issues
+        let f = parse_formula("equals(param(jobs), Array<fn(RuEnv) -> ?>)").unwrap();
+        match &f {
+            Formula::Pred(Predicate::Equals(_, TypeExpr::Literal(repr))) => {
+                match repr {
+                    TypeRepr::Applied(base, args) => {
+                        assert_eq!(**base, TypeRepr::Named("Array".to_string()));
+                        match &args[0] {
+                            TypeRepr::FnPointer { params, ret } => {
+                                assert_eq!(params[0], TypeRepr::Named("RuEnv".to_string()));
+                                assert_eq!(**ret, TypeRepr::Named("?".to_string()));
+                            }
+                            other => panic!("Expected FnPointer inside Array, got {:?}", other),
+                        }
+                    }
+                    other => panic!("Expected Applied, got {:?}", other),
+                }
+            }
+            other => panic!("Expected equals, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_flow9_fn_multi_param_with_arrow() {
+        // fn(string, Json) -> ()
+        let f = parse_formula("equals(param(notify), fn(string, Json) -> ())").unwrap();
+        match &f {
+            Formula::Pred(Predicate::Equals(_, TypeExpr::Literal(repr))) => {
+                match repr {
+                    TypeRepr::FnPointer { params, ret } => {
+                        assert_eq!(params.len(), 2);
+                        assert_eq!(params[0], TypeRepr::Named("string".to_string()));
+                        assert_eq!(params[1], TypeRepr::Named("Json".to_string()));
+                        assert_eq!(**ret, TypeRepr::Unit);
+                    }
+                    other => panic!("Expected FnPointer, got {:?}", other),
+                }
+            }
+            other => panic!("Expected equals, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_flow9_fn_returning_fn() {
+        // fn(?) -> ?  (higher-order: returns a type variable)
+        let f = parse_formula("equals(return, fn(?, ??) -> ??)").unwrap();
+        match &f {
+            Formula::Pred(Predicate::Equals(_, TypeExpr::Literal(repr))) => {
+                match repr {
+                    TypeRepr::FnPointer { params, ret } => {
+                        assert_eq!(params.len(), 2);
+                        assert_eq!(params[0], TypeRepr::Named("?".to_string()));
+                        assert_eq!(params[1], TypeRepr::Named("??".to_string()));
+                        assert_eq!(**ret, TypeRepr::Named("??".to_string()));
+                    }
+                    other => panic!("Expected FnPointer, got {:?}", other),
+                }
+            }
+            other => panic!("Expected equals, got {:?}", other),
+        }
     }
 }
