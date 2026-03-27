@@ -65,6 +65,10 @@ enum Commands {
         #[arg(long)]
         llm_api_key: Option<String>,
 
+        /// Named LLM provider from config file (overrides default)
+        #[arg(long)]
+        llm_provider: Option<String>,
+
         /// Path to config file (default: .spec-checker.yaml)
         #[arg(long)]
         config: Option<PathBuf>,
@@ -107,6 +111,7 @@ fn main() -> Result<()> {
             llm_model,
             llm_endpoint,
             llm_api_key,
+            llm_provider,
             config,
         } => {
             let llm_config = load_llm_config(
@@ -115,6 +120,7 @@ fn main() -> Result<()> {
                 llm_model.as_deref(),
                 llm_endpoint.as_deref(),
                 llm_api_key.as_deref(),
+                llm_provider.as_deref(),
             );
             cmd_check(&path, &source, &format, rules.as_ref(), &llm_config)
         }
@@ -391,6 +397,17 @@ struct ProjectConfig {
 
 #[derive(Debug, Default, serde::Deserialize)]
 struct LlmFileConfig {
+    /// Global check mode (off, dry-run, cached-only, full)
+    #[serde(default)]
+    check: Option<String>,
+    /// Default provider name (must match a key in `providers`)
+    #[serde(default)]
+    default: Option<String>,
+    /// Named LLM provider configurations
+    #[serde(default)]
+    providers: std::collections::HashMap<String, ProviderFileConfig>,
+
+    // Legacy flat fields (backward compatibility)
     #[serde(default)]
     endpoint: Option<String>,
     #[serde(default)]
@@ -398,20 +415,32 @@ struct LlmFileConfig {
     #[serde(default)]
     api_key: Option<String>,
     #[serde(default)]
-    check: Option<String>,
-    /// Local LLM for dry-run preview checks
+    cooldown_secs: Option<u64>,
     #[serde(default)]
-    local: Option<LocalLlmFileConfig>,
-    /// Cooldown between local LLM calls in seconds (default: 10)
+    context_size: Option<u32>,
+    #[serde(default)]
+    local: Option<LegacyLocalFileConfig>,
+}
+
+/// Per-provider configuration in the `providers` map.
+#[derive(Debug, Default, Clone, serde::Deserialize)]
+struct ProviderFileConfig {
+    #[serde(default)]
+    endpoint: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    api_key: Option<String>,
     #[serde(default)]
     cooldown_secs: Option<u64>,
-    /// Context window size for Ollama models (default: 8192)
     #[serde(default)]
     context_size: Option<u32>,
 }
 
+/// Legacy local LLM sub-config (accepted but ignored for backward compatibility).
 #[derive(Debug, Default, serde::Deserialize)]
-struct LocalLlmFileConfig {
+#[allow(dead_code)]
+struct LegacyLocalFileConfig {
     endpoint: String,
     model: String,
 }
@@ -423,43 +452,90 @@ fn load_llm_config(
     cli_model: Option<&str>,
     cli_endpoint: Option<&str>,
     cli_api_key: Option<&str>,
+    cli_provider: Option<&str>,
 ) -> behavioral::LlmConfig {
     let mut config = behavioral::LlmConfig::default();
 
     // 1. Load config file
     let file_config = load_project_config(config_path);
+    let llm = &file_config.llm;
 
-    // 2. Apply config file values
-    if let Some(endpoint) = file_config.llm.endpoint {
-        config.endpoint = endpoint;
+    // 2. Resolve provider config: new format (providers map) or legacy (flat fields)
+    if !llm.providers.is_empty() {
+        // New format: pick the selected provider
+        let provider_name = cli_provider
+            .map(|s| s.to_string())
+            .or_else(|| llm.default.clone());
+
+        let selected = if let Some(ref name) = provider_name {
+            match llm.providers.get(name) {
+                Some(p) => p.clone(),
+                None => {
+                    let available: Vec<&str> =
+                        llm.providers.keys().map(|s| s.as_str()).collect();
+                    eprintln!(
+                        "Warning: provider '{}' not found in config. Available: {}",
+                        name,
+                        available.join(", ")
+                    );
+                    ProviderFileConfig::default()
+                }
+            }
+        } else {
+            // No default set and no CLI override — pick first alphabetically
+            if let Some((name, p)) = llm.providers.iter().min_by_key(|(k, _)| k.as_str()) {
+                eprintln!(
+                    "Warning: no default provider set, using '{}'",
+                    name
+                );
+                p.clone()
+            } else {
+                ProviderFileConfig::default()
+            }
+        };
+
+        if let Some(endpoint) = selected.endpoint {
+            config.endpoint = endpoint;
+        }
+        if let Some(model) = selected.model {
+            config.model = model;
+        }
+        if let Some(api_key) = selected.api_key {
+            config.api_key = Some(api_key);
+        }
+        if let Some(cooldown) = selected.cooldown_secs {
+            config.cooldown_secs = cooldown;
+        }
+        if let Some(ctx) = selected.context_size {
+            config.context_size = ctx;
+        }
+    } else {
+        // Legacy flat format
+        if let Some(ref endpoint) = llm.endpoint {
+            config.endpoint = endpoint.clone();
+        }
+        if let Some(ref model) = llm.model {
+            config.model = model.clone();
+        }
+        if let Some(ref api_key) = llm.api_key {
+            config.api_key = Some(api_key.clone());
+        }
+        if let Some(cooldown) = llm.cooldown_secs {
+            config.cooldown_secs = cooldown;
+        }
+        if let Some(ctx) = llm.context_size {
+            config.context_size = ctx;
+        }
     }
-    if let Some(model) = file_config.llm.model {
-        config.model = model;
-    }
-    if let Some(api_key) = file_config.llm.api_key {
-        config.api_key = Some(api_key);
-    }
-    if let Some(check) = file_config.llm.check {
+
+    // 3. Apply global check mode from config
+    if let Some(ref check) = llm.check {
         if let Ok(mode) = check.parse() {
             config.check_mode = mode;
         }
     }
 
-    // 2b. Apply local LLM config
-    if let Some(local) = file_config.llm.local {
-        config.local = Some(behavioral::LocalLlmConfig {
-            endpoint: local.endpoint,
-            model: local.model,
-        });
-    }
-    if let Some(cooldown) = file_config.llm.cooldown_secs {
-        config.cooldown_secs = cooldown;
-    }
-    if let Some(ctx) = file_config.llm.context_size {
-        config.context_size = ctx;
-    }
-
-    // 3. CLI flags override everything
+    // 4. CLI flags override everything
     if let Some(endpoint) = cli_endpoint {
         config.endpoint = endpoint.to_string();
     }
@@ -475,10 +551,10 @@ fn load_llm_config(
         }
     }
 
-    // 4. Detect provider from endpoint
+    // 5. Detect provider from endpoint
     config.provider = behavioral::LlmConfig::detect_provider(&config.endpoint);
 
-    // 5. Resolve API key from env vars if not set
+    // 6. Resolve API key from env vars if not set
     config.resolve_api_key();
 
     config

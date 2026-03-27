@@ -2,30 +2,32 @@
 # Copy to .spec-checker.yaml and adjust for your setup.
 
 llm:
-  # Primary LLM for full verification (cloud API recommended)
-  endpoint: https://api.anthropic.com
-  model: claude-haiku-4-5-20251001
-  # api_key: sk-ant-...         # or set ANTHROPIC_API_KEY env var
   check: off                     # off | dry-run | cached-only | full
+  default: local                 # which provider to use by default
 
-  # Local LLM for dry-run preview checks (optional)
-  # When configured, dry-run mode calls the local LLM instead of
-  # just printing token estimates. Results are cached — subsequent
-  # runs with cached-only or full will use these cached results.
-  #
-  # Recommended: qwen3.5:9b (best reasoning) or qwen2.5-coder:7b
-  # Requires: ollama serve running locally
-  #
-  # local:
-  #   endpoint: http://localhost:11434/v1
-  #   model: qwen3.5:9b
+  providers:
+    # Local LLM via Ollama
+    local:
+      endpoint: http://localhost:11434/v1
+      model: qwen3.5:9b
+      cooldown_secs: 10          # seconds between calls (prevents GPU overheating)
+      context_size: 8192         # Ollama context window size
 
-  # Cooldown between local LLM calls in seconds (default: 10)
-  # Prevents GPU thermal throttling on consumer hardware.
-  # cooldown_secs: 10
+    # Anthropic Haiku (fast, cheap)
+    haiku:
+      endpoint: https://api.anthropic.com
+      model: claude-haiku-4-5-20251001
+      # api_key: sk-ant-...      # or set ANTHROPIC_API_KEY env var
 
-  # Context window size for Ollama models (default: 8192)
-  # Higher values allow larger source files but use more VRAM.
-  # context_size: 8192
+    # Anthropic Sonnet (higher quality)
+    # sonnet:
+    #   endpoint: https://api.anthropic.com
+    #   model: claude-sonnet-4-20250514
+    #   api_key: sk-ant-...
+
+# Usage:
+#   spec-checker check ./specs -s .                          # uses default provider
+#   spec-checker check ./specs -s . --llm-provider haiku     # pick a specific provider
+#   spec-checker check ./specs -s . --llm-check full         # override check mode
 
 # rules: rules.yaml             # custom rules file

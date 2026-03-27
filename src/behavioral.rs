@@ -437,22 +437,11 @@ pub struct LlmConfig {
     pub api_key: Option<String>,
     pub check_mode: LlmCheckMode,
     pub provider: LlmProvider,
-    /// Optional local LLM config for dry-run preview checks.
-    /// When set and reachable, dry-run mode calls the local LLM
-    /// instead of just printing token estimates.
-    pub local: Option<LocalLlmConfig>,
-    /// Cooldown between consecutive local LLM calls (seconds).
+    /// Cooldown between consecutive LLM calls in seconds.
     /// Prevents GPU thermal throttling on consumer hardware.
     pub cooldown_secs: u64,
     /// Context window size for Ollama models.
     pub context_size: u32,
-}
-
-/// Configuration for a local LLM used in dry-run preview mode.
-#[derive(Debug, Clone)]
-pub struct LocalLlmConfig {
-    pub endpoint: String,
-    pub model: String,
 }
 
 impl Default for LlmConfig {
@@ -463,23 +452,6 @@ impl Default for LlmConfig {
             api_key: None,
             check_mode: LlmCheckMode::Off,
             provider: LlmProvider::Anthropic,
-            local: None,
-            cooldown_secs: DEFAULT_LOCAL_LLM_COOLDOWN_SECS,
-            context_size: DEFAULT_OLLAMA_NUM_CTX,
-        }
-    }
-}
-
-impl LocalLlmConfig {
-    /// Build an LlmConfig from this local config (for calling llm_verify).
-    pub fn to_llm_config(&self) -> LlmConfig {
-        LlmConfig {
-            endpoint: self.endpoint.clone(),
-            model: self.model.clone(),
-            api_key: None,
-            check_mode: LlmCheckMode::Full,
-            provider: LlmProvider::OpenAICompatible,
-            local: None,
             cooldown_secs: DEFAULT_LOCAL_LLM_COOLDOWN_SECS,
             context_size: DEFAULT_OLLAMA_NUM_CTX,
         }
@@ -826,47 +798,47 @@ async fn handle_behavioral_invariant(
                 return;
             }
 
-            // If local LLM is configured, use it for a preview check
-            if let Some(ref local) = config.local {
-                let local_config = local.to_llm_config();
-                match llm_verify(source_code, &inv.text, &local_config).await {
-                    Ok(result) => {
-                        let label = format!("local:{}", local.model);
-                        // Cache with local model name
-                        let cached = CachedResult {
-                            satisfies: result.satisfies,
-                            reasoning: result.reasoning.clone(),
-                            model: label.clone(),
-                            timestamp: chrono_now(),
-                            code_hash: key.clone(),
-                            invariant_hash: key.clone(),
-                        };
-                        let _ = write_cache(cache_dir, &key, &cached);
-
-                        if result.satisfies {
-                            summary.llm_passed += 1;
-                        } else {
-                            summary.llm_failed += 1;
-                            summary
-                                .failures
-                                .push((inv.text.clone(), result.reasoning));
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("  [dry-run] {} — local LLM error: {}", inv.text, e);
-                        summary.skipped += 1;
-                    }
-                }
-                // Cooldown between local LLM calls to prevent GPU overheating
-                tokio::time::sleep(std::time::Duration::from_secs(config.cooldown_secs)).await;
-            } else {
-                // No local LLM — just print estimate
+            // If provider requires an API key we don't have, just print estimate
+            if config.provider == LlmProvider::Anthropic && config.api_key.is_none() {
                 let tokens = estimate_tokens(source_code, &inv.text);
                 eprintln!(
                     "  [dry-run] {} | ~{} tokens | would call LLM",
                     inv.text, tokens,
                 );
                 summary.skipped += 1;
+                return;
+            }
+
+            // Call the configured provider for a preview check
+            match llm_verify(source_code, &inv.text, config).await {
+                Ok(result) => {
+                    let cached = CachedResult {
+                        satisfies: result.satisfies,
+                        reasoning: result.reasoning.clone(),
+                        model: config.model.clone(),
+                        timestamp: chrono_now(),
+                        code_hash: key.clone(),
+                        invariant_hash: key.clone(),
+                    };
+                    let _ = write_cache(cache_dir, &key, &cached);
+
+                    if result.satisfies {
+                        summary.llm_passed += 1;
+                    } else {
+                        summary.llm_failed += 1;
+                        summary
+                            .failures
+                            .push((inv.text.clone(), result.reasoning));
+                    }
+                }
+                Err(e) => {
+                    eprintln!("  [dry-run] {} — LLM error: {}", inv.text, e);
+                    summary.skipped += 1;
+                }
+            }
+            // Cooldown between calls to prevent GPU overheating
+            if config.cooldown_secs > 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(config.cooldown_secs)).await;
             }
         }
         LlmCheckMode::CachedOnly => {
