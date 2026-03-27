@@ -83,6 +83,12 @@ protocol:
 
 Run `spec-checker toposort ./specs` to get the dependency-ordered list of source files. This ensures you process leaf dependencies first, building up context.
 
+If `spec-checker` is not installed or the `toposort` command is not available, compute the order yourself:
+1. Read all `.spec.yaml` files in `./specs`
+2. Parse the `depends_on` field from each spec
+3. Build a dependency graph and sort topologically: process files with no internal dependencies first, then files that depend only on already-processed files
+4. If there are cycles, break them arbitrarily and warn the user
+
 If a single file was provided as argument, only process that file.
 
 ### Step 2: For each file (in order)
@@ -96,12 +102,14 @@ If a single file was provided as argument, only process that file.
 
 ### Step 3: Validate
 
-After processing all files, run:
+After processing all files, if `spec-checker` is installed, run:
 ```bash
 spec-checker check .
 ```
 
 This runs structural checks (without LLM) to catch any format errors or broken references in the specs you wrote. Fix any errors reported.
+
+If `spec-checker` is not installed, manually verify that each spec file is valid YAML and that the fields you added (`requires`, `ensures`, `modifies`, `invariants`) are string arrays.
 
 ## Important rules
 
