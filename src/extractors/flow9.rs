@@ -441,7 +441,21 @@ fn strip_comments(s: &str) -> String {
     let mut result = String::new();
     let mut chars = s.chars().peekable();
     while let Some(ch) = chars.next() {
-        if ch == '/' {
+        if ch == '"' {
+            // String literal: copy verbatim until closing quote
+            result.push(ch);
+            while let Some(c) = chars.next() {
+                result.push(c);
+                if c == '\\' {
+                    // Escaped character: copy next char too
+                    if let Some(esc) = chars.next() {
+                        result.push(esc);
+                    }
+                } else if c == '"' {
+                    break;
+                }
+            }
+        } else if ch == '/' {
             if chars.peek() == Some(&'/') {
                 // Line comment: skip to end of line
                 for c in chars.by_ref() {
