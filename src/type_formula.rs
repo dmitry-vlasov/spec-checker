@@ -2044,4 +2044,14 @@ mod tests {
             other => panic!("Expected equals, got {:?}", other),
         }
     }
+
+    #[test]
+    fn parse_flow9_exact_failing_formulas() {
+        // These are the exact strings that fail in russell-flow
+        parse_formula("equals(param(def), ??)").unwrap();
+        parse_formula("equals(return, ??)").unwrap();
+        parse_formula("equals(return, ????)").unwrap();
+        parse_formula("equals(param(data), ?)").unwrap();
+        parse_formula("equals(param(exec), fn(ScComm, RuState, RuOut) -> RuState)").unwrap();
+    }
 }
