@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::*;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 mod behavioral;
@@ -96,6 +97,24 @@ enum Commands {
         /// Source file
         source: PathBuf,
     },
+
+    /// Print spec files in topological order (dependencies first)
+    Toposort {
+        /// Path to spec directory
+        #[arg(default_value = "./specs")]
+        path: PathBuf,
+    },
+
+    /// Install Claude Code skills (fill-behavioral-specs, flow9)
+    InitSkill {
+        /// Install globally (~/.claude/commands/) instead of project-local (.claude/commands/)
+        #[arg(long)]
+        global: bool,
+
+        /// Install only specific skill(s): fill-behavioral-specs, flow9
+        #[arg(long, value_delimiter = ',')]
+        only: Vec<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -130,6 +149,8 @@ fn main() -> Result<()> {
             output,
         } => cmd_init(&source, language.as_deref(), output.as_ref()),
         Commands::Diff { spec, source } => cmd_diff(&spec, &source),
+        Commands::Toposort { path } => cmd_toposort(&path),
+        Commands::InitSkill { global, only } => cmd_init_skill(global, &only),
     }
 }
 
@@ -812,6 +833,165 @@ fn cmd_diff(spec_path: &PathBuf, source_path: &PathBuf) -> Result<()> {
                 println!("    [{}, {}]", pair[0], pair[1]);
             }
         }
+    }
+
+    Ok(())
+}
+
+fn cmd_toposort(spec_path: &PathBuf) -> Result<()> {
+    let specs = load_specs(spec_path)?;
+
+    if specs.is_empty() {
+        println!("{}", "No spec files found.".yellow());
+        return Ok(());
+    }
+
+    // Build a map: source_path -> spec (for dependency resolution)
+    // Also map module name -> source_path for flexible matching
+    let mut path_to_idx: HashMap<String, usize> = HashMap::new();
+    let mut module_to_idx: HashMap<String, usize> = HashMap::new();
+
+    for (i, spec) in specs.iter().enumerate() {
+        if let Some(ref sp) = spec.source_path {
+            path_to_idx.insert(sp.clone(), i);
+        }
+        module_to_idx.insert(spec.module.clone(), i);
+    }
+
+    let n = specs.len();
+    // Build adjacency list: edges[i] = list of indices that i depends on
+    let mut edges: Vec<Vec<usize>> = vec![Vec::new(); n];
+
+    for (i, spec) in specs.iter().enumerate() {
+        for dep in &spec.depends_on {
+            // Try to resolve dependency: first as source_path, then as module name
+            if let Some(&j) = path_to_idx.get(dep) {
+                edges[i].push(j);
+            } else if let Some(&j) = module_to_idx.get(dep) {
+                edges[i].push(j);
+            }
+            // External/unresolved deps are silently skipped
+        }
+    }
+
+    // Kahn's algorithm for topological sort
+    let mut in_degree = vec![0usize; n];
+    for deps in &edges {
+        for &j in deps {
+            in_degree[j] += 1;
+        }
+    }
+
+    let mut queue: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+    for i in 0..n {
+        if in_degree[i] == 0 {
+            queue.push_back(i);
+        }
+    }
+
+    let mut order: Vec<usize> = Vec::with_capacity(n);
+    while let Some(i) = queue.pop_front() {
+        order.push(i);
+        for &j in &edges[i] {
+            in_degree[j] -= 1;
+            if in_degree[j] == 0 {
+                queue.push_back(j);
+            }
+        }
+    }
+
+    // Detect cycles: if order doesn't contain all nodes
+    if order.len() < n {
+        let in_cycle: Vec<&str> = (0..n)
+            .filter(|i| in_degree[*i] > 0)
+            .map(|i| specs[i].module.as_str())
+            .collect();
+        eprintln!(
+            "{} Dependency cycle detected among: {}",
+            "⚠".yellow(),
+            in_cycle.join(", ")
+        );
+        eprintln!("Appending cyclic modules in arbitrary order.");
+        for i in 0..n {
+            if in_degree[i] > 0 {
+                order.push(i);
+            }
+        }
+    }
+
+    // Reverse: we want dependencies first (leaves first)
+    // Kahn's gives us dependents first (nodes with no incoming edges = things nothing depends on)
+    // Actually, let me reconsider. In our graph, edges[i] = what i depends on.
+    // in_degree[j] counts how many things depend on j.
+    // Kahn's removes nodes with in_degree 0 first = nodes nothing depends on = leaves/consumers.
+    // We want the opposite: dependencies first.
+    // So we reverse the output.
+    order.reverse();
+
+    for i in &order {
+        let spec = &specs[*i];
+        if let Some(ref sp) = spec.source_path {
+            println!("{}", sp);
+        } else {
+            println!("{}", spec.module);
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_init_skill(global: bool, only: &[String]) -> Result<()> {
+    let all_skills: &[(&str, &str, &[&str])] = &[
+        (
+            "fill-behavioral-specs",
+            include_str!("skill/fill-behavioral-specs.md"),
+            &[
+                "  /fill-behavioral-specs            Fill behavioral specs for the whole project",
+                "  /fill-behavioral-specs src/foo.rs  Fill specs for a single file",
+            ],
+        ),
+        (
+            "flow9",
+            include_str!("skill/flow9.md"),
+            &[
+                "  /flow9                             Flow9 language reference for the agent",
+            ],
+        ),
+    ];
+
+    let target_dir = if global {
+        let home = std::env::var("HOME")
+            .map_err(|_| anyhow::anyhow!("Could not determine HOME directory"))?;
+        PathBuf::from(home).join(".claude").join("commands")
+    } else {
+        PathBuf::from(".claude").join("commands")
+    };
+
+    std::fs::create_dir_all(&target_dir)?;
+
+    let mut installed = 0;
+    for (name, content, usage_lines) in all_skills {
+        if !only.is_empty() && !only.iter().any(|o| o == name) {
+            continue;
+        }
+
+        let target_file = target_dir.join(format!("{}.md", name));
+        let verb = if target_file.exists() { "Updated" } else { "Installed" };
+        std::fs::write(&target_file, content)?;
+        println!("{} {} skill: {}", "✓".green(), verb, target_file.display());
+        for line in *usage_lines {
+            println!("{}", line.cyan());
+        }
+        installed += 1;
+    }
+
+    if installed == 0 {
+        let available: Vec<&str> = all_skills.iter().map(|(n, _, _)| *n).collect();
+        println!(
+            "{} No matching skills. Available: {}",
+            "⚠".yellow(),
+            available.join(", ")
+        );
     }
 
     Ok(())
