@@ -293,12 +293,40 @@ fn cmd_check(
     }
 
     // ── Load and check the root project ─────────────────────────────────────
-    let specs = load_specs(spec_path)?;
+    let all_specs = load_specs(spec_path)?;
 
-    if specs.is_empty() {
+    if all_specs.is_empty() {
         println!("{}", "No spec files found.".yellow());
         return Ok(());
     }
+
+    // Filter out specs matching exclude patterns from config
+    let specs = if config.exclude.is_empty() {
+        all_specs
+    } else {
+        let canonical_source = source_root.canonicalize().unwrap_or_else(|_| source_root.clone());
+        let matchers: Vec<glob::Pattern> = config.exclude.iter()
+            .filter_map(|pat| {
+                let full = format!("{}/{}", canonical_source.display(), pat);
+                glob::Pattern::new(&full).ok()
+            })
+            .collect();
+        let before = all_specs.len();
+        let filtered: Vec<_> = all_specs.into_iter().filter(|s| {
+            if let Some(ref sp) = s.source_path {
+                let full = canonical_source.join(sp);
+                let canonical = full.canonicalize().unwrap_or(full);
+                !matchers.iter().any(|p| p.matches_path(&canonical))
+            } else {
+                true
+            }
+        }).collect();
+        let excluded = before - filtered.len();
+        if excluded > 0 {
+            println!("{} Excluded {} spec(s) matching config exclude patterns", "ℹ".blue(), excluded);
+        }
+        filtered
+    };
 
     // Build checker with specs and optional rules config
     let mut checker = SpecChecker::new(source_root.clone()).with_specs(&specs);
@@ -594,6 +622,9 @@ struct ProjectConfig {
     /// Lightweight public module list (alternative to subsystem `exposes`)
     #[serde(default)]
     public_modules: Option<Vec<String>>,
+    /// Glob patterns to exclude from init and check
+    #[serde(default)]
+    exclude: Vec<String>,
     #[serde(default)]
     llm: LlmFileConfig,
     #[serde(default)]
@@ -813,6 +844,33 @@ fn load_project_config_from_paths(paths_to_try: &[PathBuf]) -> ProjectConfig {
     ProjectConfig::default()
 }
 
+/// Save exclude patterns to .spec-checker.yaml, preserving other fields.
+fn save_exclude_to_config(dir: &PathBuf, excludes: &[String]) -> Result<()> {
+    let config_path = dir.join(".spec-checker.yaml");
+
+    // Read existing config as a generic YAML value to preserve all fields
+    let mut doc: serde_yaml::Value = if config_path.is_file() {
+        let content = std::fs::read_to_string(&config_path)?;
+        serde_yaml::from_str(&content).unwrap_or(serde_yaml::Value::Mapping(Default::default()))
+    } else {
+        serde_yaml::Value::Mapping(Default::default())
+    };
+
+    // Update the exclude field
+    let mapping = doc.as_mapping_mut().ok_or_else(|| anyhow::anyhow!("Config is not a YAML mapping"))?;
+    let exclude_val: Vec<serde_yaml::Value> = excludes.iter().map(|s| serde_yaml::Value::String(s.clone())).collect();
+    mapping.insert(
+        serde_yaml::Value::String("exclude".to_string()),
+        serde_yaml::Value::Sequence(exclude_val),
+    );
+
+    let yaml = serde_yaml::to_string(&doc)?;
+    std::fs::write(&config_path, &yaml)?;
+    println!("{} Saved exclude patterns to {}", "ℹ".blue(), config_path.display());
+
+    Ok(())
+}
+
 /// Run checks on a single project (used by --project flag)
 fn run_single_project_check(
     specs: &[ModuleSpec],
@@ -979,9 +1037,28 @@ fn cmd_init_dir(
         None => vec!["flow", "rs", "sol"],
     };
 
+    // Merge CLI excludes with existing config excludes
+    let existing_config = load_project_config_at(source_dir);
+    let all_excludes: Vec<String> = if exclude.is_empty() {
+        existing_config.exclude.clone()
+    } else {
+        let mut merged = existing_config.exclude.clone();
+        for pat in exclude {
+            if !merged.contains(pat) {
+                merged.push(pat.clone());
+            }
+        }
+        merged
+    };
+
+    // Save exclude patterns to .spec-checker.yaml if CLI provided new ones
+    if !exclude.is_empty() {
+        save_exclude_to_config(source_dir, &all_excludes)?;
+    }
+
     // Compile exclude patterns (resolved relative to source_dir)
     let canonical_source = source_dir.canonicalize().unwrap_or_else(|_| source_dir.clone());
-    let exclude_matchers: Vec<glob::Pattern> = exclude
+    let exclude_matchers: Vec<glob::Pattern> = all_excludes
         .iter()
         .filter_map(|pat| {
             let full = format!("{}/{}", canonical_source.display(), pat);
