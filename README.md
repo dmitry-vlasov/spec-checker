@@ -553,9 +553,42 @@ spec-checker init-skill --only flow9
 spec-checker init-skill --only spec-checker
 ```
 
-## AI Guidance Skill
+## Claude Code Skills
 
-Spec-checker includes a Claude Code skill (`spec-checker`) that turns specs into an **AI guidance map** — a compressed semantic model of the codebase that an AI agent consults before reading source code.
+Spec-checker ships with Claude Code skills that can be installed into any project via `spec-checker init-skill`. Skills are markdown prompt files placed in `.claude/commands/`.
+
+| Skill | Installed by default | Usage | Purpose |
+|-------|---------------------|-------|---------|
+| `spec-checker` | Yes | `/spec-checker <mode>` | AI guidance map: use specs for reasoning, planning, refactoring, and Q&A |
+| `fill-behavioral-specs` | Yes | `/fill-behavioral-specs [file]` | Fill in behavioral specs (requires/ensures/invariants) by reading source code |
+| `flow9` | No (`--only flow9`) | `/flow9` | Flow9 language reference for the AI agent |
+
+```bash
+# Install default skills (spec-checker + fill-behavioral-specs)
+spec-checker init-skill
+
+# Install all skills including language-specific ones
+spec-checker init-skill --only all
+
+# Install globally (available in all projects)
+spec-checker init-skill --global
+```
+
+### fill-behavioral-specs
+
+The `fill-behavioral-specs` skill reads source code and fills in the behavioral parts of spec files that `spec-checker init` leaves empty: `description`, `requires`, `ensures`, `modifies`, and `invariants`. It processes files in dependency order (using `spec-checker toposort`) so that each module's specs can reference the contracts of its dependencies. After writing specs, it updates `source_hash` to prevent staleness warnings.
+
+```bash
+# Fill specs for the whole project
+/fill-behavioral-specs
+
+# Fill specs for a single file
+/fill-behavioral-specs src/checker.rs
+```
+
+### spec-checker (AI Guidance Skill)
+
+The `spec-checker` skill turns specs into an **AI guidance map** — a compressed semantic model of the codebase that an AI agent consults before reading source code.
 
 ### Layered resolution
 
@@ -584,11 +617,6 @@ The skill follows a layered resolution principle, stopping as soon as it has eno
 - **New features**: use `plan` to design specs first, then implement to satisfy them
 - **Q&A**: use `ask` to get answers from specs without reading source
 - **Onboarding**: use `orient` to understand a codebase in seconds
-
-Install the skill:
-```bash
-spec-checker init-skill --only spec-checker
-```
 
 ## Self-Verification
 
