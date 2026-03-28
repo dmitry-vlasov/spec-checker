@@ -422,11 +422,14 @@ Rate-limited requests (HTTP 429) are automatically retried with exponential back
 
 ### Output Tags
 
-Every check result shows its constraint kind and verification tier:
+Every check result shows its constraint kind and verification tier. Modules with issues display their source file path:
 
 ```
+Checking: bridge (src/bridge.rs)
   ✗ [dependency|syntactic] Forbidden dependency: 'bridge' imports 'test_utils'
   ⚠ [architectural|rules-engine] Layer violation: infrastructure → domain
+
+Composition Checks
   ✓ [architectural|smt] State ownership consistency verified
 ```
 
@@ -460,6 +463,12 @@ Create `.spec-checker.yaml` in your project root to set defaults:
 
 ```yaml
 # .spec-checker.yaml
+
+# Exclude patterns (persisted by --exclude flag, used by both init and check)
+exclude:
+  - tools/**
+  - tests/**
+
 llm:
   # Anthropic (default)
   endpoint: https://api.anthropic.com
@@ -496,11 +505,17 @@ rules: rules.yaml              # default rules file
 ## Usage
 
 ```bash
-# Check all specs in a directory
+# Check all specs (default: ./specs dir, current dir as source root)
+spec-checker check .
+
+# Check with explicit paths
 spec-checker check ./specs -s .
 
 # Check a single module
 spec-checker check ./specs/checker.spec.yaml -s .
+
+# Verbose output (show every module, not just errors/warnings)
+spec-checker check . -v
 
 # With custom rules
 spec-checker check ./specs -s . -r rules.yaml
@@ -520,6 +535,9 @@ spec-checker init --language rust ./src/main.rs
 
 # Generate specs for entire directory
 spec-checker init --language rust ./src/ -o ./specs/
+
+# Exclude directories from init (persisted to .spec-checker.yaml)
+spec-checker init --language flow9 . -o ./specs --exclude 'tools/**' --exclude 'tests/**'
 
 # Diff: show spec vs implementation discrepancies
 spec-checker diff ./specs/main.spec.yaml ./src/main.rs
@@ -551,6 +569,7 @@ The skill follows a layered resolution principle, stopping as soon as it has eno
 
 | Mode | Usage | Purpose |
 |------|-------|---------|
+| `help` | `/spec-checker help` | Show available modes |
 | `orient` | `/spec-checker orient` | Read all specs, build mental model of the codebase |
 | `ask` | `/spec-checker ask <question>` | Answer questions from specs first, fall through to source if needed |
 | `plan` | `/spec-checker plan <feature>` | Spec-first development: design in specs, then implement |
@@ -573,28 +592,36 @@ spec-checker init-skill --only spec-checker
 
 ## Self-Verification
 
-The spec-checker verifies its own structure (10 modules, 1 subsystem, ~120 type constraints, ~30 invariants):
+The spec-checker verifies its own structure (12 modules, 2 subsystems, ~120 type constraints, ~30 invariants):
 
 ```bash
-$ spec-checker check ./specs -s .
+$ spec-checker check .
 
 Spec Checker
 ========================================
 
-Checking: checker
+========================================
+PASSED: All 14 specs validated
+```
+
+By default, only modules with errors or warnings are shown. Use `-v` for verbose output:
+
+```bash
+$ spec-checker check . -v
+
+Spec Checker
+========================================
+
+Checking: behavioral (src/behavioral.rs)
   ✓ All checks passed
 
-Checking: spec
+Checking: checker (src/checker.rs)
   ✓ All checks passed
 
 ...
 
-Subsystem Checks
-Checking subsystem: CoreVerification
-  ✓ All checks passed
-
 ========================================
-PASSED: All specs validated
+PASSED: All 14 specs validated
 ```
 
 ## License
