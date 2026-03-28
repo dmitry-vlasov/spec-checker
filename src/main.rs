@@ -248,15 +248,16 @@ fn cmd_check(
 
             for spec in &proj.specs {
                 let result = proj_checker.check(spec)?;
+                let loc = spec.source_path.as_deref().unwrap_or("?");
                 for cr in &result.constraint_results {
                     let tag = format!("[{}|{}]", cr.kind, cr.tier);
                     match cr.severity {
                         checker::ConstraintSeverity::Error => {
-                            println!("  {} {} {}::{}: {}", "✗".red(), tag.dimmed(), proj.name, spec.module, cr.message);
+                            println!("  {} {} {}::{} ({}): {}", "✗".red(), tag.dimmed(), proj.name, spec.module, loc, cr.message);
                             proj_errors += 1;
                         }
                         checker::ConstraintSeverity::Warning => {
-                            println!("  {} {} {}::{}: {}", "⚠".yellow(), tag.dimmed(), proj.name, spec.module, cr.message);
+                            println!("  {} {} {}::{} ({}): {}", "⚠".yellow(), tag.dimmed(), proj.name, spec.module, loc, cr.message);
                         }
                     }
                 }
@@ -328,16 +329,17 @@ fn cmd_check(
 
     for spec in &specs {
         let result = checker.check(spec)?;
+        let loc = spec.source_path.as_deref().unwrap_or("?");
 
         if result.constraint_results.is_empty() {
             total_passed += 1;
             if verbose {
-                println!("{} {}", "Checking:".bold(), spec.module.cyan());
+                println!("{} {} ({})", "Checking:".bold(), spec.module.cyan(), loc.dimmed());
                 println!("  {} All checks passed", "✓".green());
                 println!();
             }
         } else {
-            println!("{} {}", "Checking:".bold(), spec.module.cyan());
+            println!("{} {} ({})", "Checking:".bold(), spec.module.cyan(), loc.dimmed());
             for cr in &result.constraint_results {
                 let tag = format!("[{}|{}]", cr.kind, cr.tier);
                 match cr.severity {
@@ -819,11 +821,12 @@ fn run_single_project_check(
 
     for spec in specs {
         let result = checker.check(spec)?;
+        let loc = spec.source_path.as_deref().unwrap_or("?");
 
         if result.constraint_results.is_empty() {
             total_passed += 1;
         } else {
-            println!("{} {}", "Checking:".bold(), spec.module.cyan());
+            println!("{} {} ({})", "Checking:".bold(), spec.module.cyan(), loc.dimmed());
             for cr in &result.constraint_results {
                 let tag = format!("[{}|{}]", cr.kind, cr.tier);
                 match cr.severity {
