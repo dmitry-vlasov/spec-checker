@@ -100,6 +100,10 @@ enum Commands {
         /// Output spec file or directory path
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// Glob patterns to exclude (can be repeated, e.g. --exclude 'tools/**' --exclude 'tests/**')
+        #[arg(short, long)]
+        exclude: Vec<String>,
     },
 
     /// Show diff between spec and implementation
@@ -173,7 +177,8 @@ fn main() -> Result<()> {
             source,
             language,
             output,
-        } => cmd_init(&source, language.as_deref(), output.as_ref()),
+            exclude,
+        } => cmd_init(&source, language.as_deref(), output.as_ref(), &exclude),
         Commands::Diff { spec, source } => cmd_diff(&spec, &source),
         Commands::Toposort { path, all } => cmd_toposort(&path, all),
         Commands::Deps { path } => cmd_deps(&path),
@@ -929,9 +934,9 @@ fn print_dep_tree(graph: &dependency::DependencyGraph, proj: &dependency::Resolv
     }
 }
 
-fn cmd_init(source: &PathBuf, language: Option<&str>, output: Option<&PathBuf>) -> Result<()> {
+fn cmd_init(source: &PathBuf, language: Option<&str>, output: Option<&PathBuf>, exclude: &[String]) -> Result<()> {
     if source.is_dir() {
-        return cmd_init_dir(source, language, output);
+        return cmd_init_dir(source, language, output, exclude);
     }
 
     let lang = language
@@ -963,6 +968,7 @@ fn cmd_init_dir(
     source_dir: &PathBuf,
     language: Option<&str>,
     output: Option<&PathBuf>,
+    exclude: &[String],
 ) -> Result<()> {
     // Determine file extension to scan for
     let extensions: Vec<&str> = match language {
@@ -973,16 +979,36 @@ fn cmd_init_dir(
         None => vec!["flow", "rs", "sol"],
     };
 
+    // Compile exclude patterns (resolved relative to source_dir)
+    let canonical_source = source_dir.canonicalize().unwrap_or_else(|_| source_dir.clone());
+    let exclude_matchers: Vec<glob::Pattern> = exclude
+        .iter()
+        .filter_map(|pat| {
+            let full = format!("{}/{}", canonical_source.display(), pat);
+            glob::Pattern::new(&full).ok()
+        })
+        .collect();
+
     // Determine output directory
     let out_dir = output.cloned().unwrap_or_else(|| PathBuf::from("./specs"));
     std::fs::create_dir_all(&out_dir)?;
 
     let mut count = 0;
+    let mut skipped = 0;
 
     for ext in &extensions {
         let pattern = format!("{}/**/*.{}", source_dir.display(), ext);
         for entry in glob::glob(&pattern)? {
             let entry = entry?;
+
+            // Check against exclude patterns
+            if !exclude_matchers.is_empty() {
+                let canonical_entry = entry.canonicalize().unwrap_or_else(|_| entry.clone());
+                if exclude_matchers.iter().any(|p| p.matches_path(&canonical_entry)) {
+                    skipped += 1;
+                    continue;
+                }
+            }
 
             let lang = detect_language(&entry)
                 .or_else(|| language.map(String::from))
@@ -1036,12 +1062,22 @@ fn cmd_init_dir(
         }
     }
 
-    println!(
-        "\n{} Generated {} spec file(s) in {}",
-        "Done:".green().bold(),
-        count,
-        out_dir.display()
-    );
+    if skipped > 0 {
+        println!(
+            "\n{} Generated {} spec file(s) in {} ({} file(s) excluded)",
+            "Done:".green().bold(),
+            count,
+            out_dir.display(),
+            skipped
+        );
+    } else {
+        println!(
+            "\n{} Generated {} spec file(s) in {}",
+            "Done:".green().bold(),
+            count,
+            out_dir.display()
+        );
+    }
 
     Ok(())
 }
