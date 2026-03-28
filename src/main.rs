@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 mod behavioral;
 mod checker;
+mod dependency;
 mod extractors;
 mod rules;
 mod smt;
@@ -73,6 +74,14 @@ enum Commands {
         /// Path to config file (default: .spec-checker.yaml)
         #[arg(long)]
         config: Option<PathBuf>,
+
+        /// Only check the current project, skip dependency checks
+        #[arg(long)]
+        shallow: bool,
+
+        /// Check a specific dependency project by name
+        #[arg(long)]
+        project: Option<String>,
     },
 
     /// Generate spec skeleton from existing code (file or directory)
@@ -103,6 +112,17 @@ enum Commands {
         /// Path to spec directory
         #[arg(default_value = "./specs")]
         path: PathBuf,
+
+        /// Include all transitive dependency projects
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// Show the dependency graph
+    Deps {
+        /// Path to project root
+        #[arg(default_value = ".")]
+        path: PathBuf,
     },
 
     /// Install Claude Code skills (default skills if no name given; "all" for everything)
@@ -131,6 +151,8 @@ fn main() -> Result<()> {
             llm_api_key,
             llm_provider,
             config,
+            shallow,
+            project,
         } => {
             let llm_config = load_llm_config(
                 config.as_ref(),
@@ -140,7 +162,7 @@ fn main() -> Result<()> {
                 llm_api_key.as_deref(),
                 llm_provider.as_deref(),
             );
-            cmd_check(&path, &source, &format, rules.as_ref(), &llm_config)
+            cmd_check(&path, &source, &format, rules.as_ref(), &llm_config, shallow, project.as_deref())
         }
         Commands::Init {
             source,
@@ -148,7 +170,8 @@ fn main() -> Result<()> {
             output,
         } => cmd_init(&source, language.as_deref(), output.as_ref()),
         Commands::Diff { spec, source } => cmd_diff(&spec, &source),
-        Commands::Toposort { path } => cmd_toposort(&path),
+        Commands::Toposort { path, all } => cmd_toposort(&path, all),
+        Commands::Deps { path } => cmd_deps(&path),
         Commands::InitSkill { global, skill } => cmd_init_skill(global, skill.as_deref()),
     }
 }
@@ -159,11 +182,105 @@ fn cmd_check(
     _format: &str,
     rules_path: Option<&PathBuf>,
     llm_config: &behavioral::LlmConfig,
+    shallow: bool,
+    project_filter: Option<&str>,
 ) -> Result<()> {
     println!("{}", "Spec Checker".bold().cyan());
     println!("{}", "=".repeat(40));
     println!();
 
+    // ── Dependency graph resolution ─────────────────────────────────────────
+    let config = load_project_config_at(source_root);
+    let has_deps = !config.dependencies.is_empty();
+    let dep_graph = if has_deps && !shallow {
+        match dependency::DependencyGraph::resolve(source_root) {
+            Ok(graph) => {
+                println!(
+                    "{} Resolved {} project(s) in dependency graph",
+                    "ℹ".blue(),
+                    graph.projects.len()
+                );
+                for proj in graph.dependencies() {
+                    println!("  {} {} ({})", "·".dimmed(), proj.name.cyan(), proj.root.display());
+                }
+                println!();
+                Some(graph)
+            }
+            Err(e) => {
+                eprintln!("{} Failed to resolve dependencies: {}", "✗".red(), e);
+                return Err(e);
+            }
+        }
+    } else {
+        None
+    };
+
+    // ── If --project is set, check that specific dependency in isolation ────
+    if let Some(proj_name) = project_filter {
+        if let Some(ref graph) = dep_graph {
+            if let Some(proj) = graph.get(proj_name) {
+                println!("{} Checking project '{}' in isolation", "ℹ".blue(), proj_name);
+                println!();
+                let proj_checker = SpecChecker::new(proj.root.clone()).with_specs(&proj.specs);
+                return run_single_project_check(&proj.specs, &proj_checker, &proj.root, llm_config);
+            } else {
+                anyhow::bail!("Project '{}' not found in dependency graph", proj_name);
+            }
+        } else {
+            anyhow::bail!("--project requires dependencies to be configured (and --shallow must not be set)");
+        }
+    }
+
+    // ── Phase 1: Check dependency projects internally ───────────────────────
+    let mut dep_errors: HashMap<String, usize> = HashMap::new();
+    if let Some(ref graph) = dep_graph {
+        for proj in graph.dependencies() {
+            println!("{} {}", "Checking dependency:".bold(), proj.name.cyan());
+
+            let proj_checker = SpecChecker::new(proj.root.clone()).with_specs(&proj.specs);
+            let mut proj_errors = 0;
+
+            for spec in &proj.specs {
+                let result = proj_checker.check(spec)?;
+                for cr in &result.constraint_results {
+                    let tag = format!("[{}|{}]", cr.kind, cr.tier);
+                    match cr.severity {
+                        checker::ConstraintSeverity::Error => {
+                            println!("  {} {} {}::{}: {}", "✗".red(), tag.dimmed(), proj.name, spec.module, cr.message);
+                            proj_errors += 1;
+                        }
+                        checker::ConstraintSeverity::Warning => {
+                            println!("  {} {} {}::{}: {}", "⚠".yellow(), tag.dimmed(), proj.name, spec.module, cr.message);
+                        }
+                    }
+                }
+            }
+
+            if proj_errors > 0 {
+                dep_errors.insert(proj.name.clone(), proj_errors);
+                println!(
+                    "  {} {} error(s) in dependency '{}'",
+                    "✗".red(),
+                    proj_errors,
+                    proj.name
+                );
+            } else {
+                println!("  {} All checks passed", "✓".green());
+            }
+            println!();
+        }
+
+        if !dep_errors.is_empty() {
+            println!(
+                "{} {} dependency project(s) have internal errors — boundary checks will be skipped for them",
+                "⚠".yellow(),
+                dep_errors.len()
+            );
+            println!();
+        }
+    }
+
+    // ── Load and check the root project ─────────────────────────────────────
     let specs = load_specs(spec_path)?;
 
     if specs.is_empty() {
@@ -173,6 +290,11 @@ fn cmd_check(
 
     // Build checker with specs and optional rules config
     let mut checker = SpecChecker::new(source_root.clone()).with_specs(&specs);
+
+    // Attach external specs from dependencies for cross-project reference resolution
+    if let Some(ref graph) = dep_graph {
+        checker = checker.with_dependency_graph(graph);
+    }
 
     if let Some(rules_file) = rules_path {
         let rules_content = std::fs::read_to_string(rules_file)?;
@@ -276,6 +398,30 @@ fn cmd_check(
                 println!("  {} All checks passed", "✓".green());
             }
 
+            println!();
+        }
+    }
+
+    // ── Phase 2: Boundary checks (cross-project) ─────────────────────────
+    if let Some(ref graph) = dep_graph {
+        let boundary_result = checker.check_cross_project_boundaries(graph, &dep_errors);
+
+        if !boundary_result.constraint_results.is_empty() {
+            println!("{}", "Cross-Project Boundary Checks".bold().cyan());
+
+            for cr in &boundary_result.constraint_results {
+                let tag = format!("[{}|{}]", cr.kind, cr.tier);
+                match cr.severity {
+                    checker::ConstraintSeverity::Error => {
+                        println!("  {} {} {}", "✗".red(), tag.dimmed(), cr.message);
+                        total_errors += 1;
+                    }
+                    checker::ConstraintSeverity::Warning => {
+                        println!("  {} {} {}", "⚠".yellow(), tag.dimmed(), cr.message);
+                        total_warnings += 1;
+                    }
+                }
+            }
             println!();
         }
     }
@@ -409,10 +555,26 @@ fn cmd_check(
 /// Config file structure (.spec-checker.yaml)
 #[derive(Debug, Default, serde::Deserialize)]
 struct ProjectConfig {
+    /// Canonical project name (used by consumers in `::` references)
+    #[serde(default)]
+    name: Option<String>,
+    /// Direct dependencies: name -> { path: "..." }
+    #[serde(default)]
+    dependencies: HashMap<String, DependencyEntry>,
+    /// Lightweight public module list (alternative to subsystem `exposes`)
+    #[serde(default)]
+    public_modules: Option<Vec<String>>,
     #[serde(default)]
     llm: LlmFileConfig,
     #[serde(default)]
     rules: Option<String>,
+}
+
+/// A dependency entry in the project config
+#[derive(Debug, Clone, serde::Deserialize)]
+struct DependencyEntry {
+    /// Filesystem path to the dependency root (absolute or relative)
+    path: PathBuf,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -581,7 +743,6 @@ fn load_llm_config(
 }
 
 fn load_project_config(config_path: Option<&PathBuf>) -> ProjectConfig {
-    // Try explicit path first, then default location
     let paths_to_try: Vec<PathBuf> = if let Some(p) = config_path {
         vec![p.clone()]
     } else {
@@ -591,6 +752,19 @@ fn load_project_config(config_path: Option<&PathBuf>) -> ProjectConfig {
         ]
     };
 
+    load_project_config_from_paths(&paths_to_try)
+}
+
+/// Load project config searching in a specific directory (used by dependency resolver)
+fn load_project_config_at(dir: &std::path::Path) -> ProjectConfig {
+    let paths_to_try = vec![
+        dir.join(".spec-checker.yaml"),
+        dir.join(".spec-checker.yml"),
+    ];
+    load_project_config_from_paths(&paths_to_try)
+}
+
+fn load_project_config_from_paths(paths_to_try: &[PathBuf]) -> ProjectConfig {
     for path in paths_to_try {
         if path.is_file() {
             if let Ok(content) = std::fs::read_to_string(&path) {
@@ -605,6 +779,124 @@ fn load_project_config(config_path: Option<&PathBuf>) -> ProjectConfig {
     }
 
     ProjectConfig::default()
+}
+
+/// Run checks on a single project (used by --project flag)
+fn run_single_project_check(
+    specs: &[ModuleSpec],
+    checker: &SpecChecker,
+    source_root: &PathBuf,
+    llm_config: &behavioral::LlmConfig,
+) -> Result<()> {
+    let mut total_errors = 0;
+    let mut total_warnings = 0;
+
+    for spec in specs {
+        println!("{} {}", "Checking:".bold(), spec.module.cyan());
+        let result = checker.check(spec)?;
+
+        for cr in &result.constraint_results {
+            let tag = format!("[{}|{}]", cr.kind, cr.tier);
+            match cr.severity {
+                checker::ConstraintSeverity::Error => {
+                    println!("  {} {} {}", "✗".red(), tag.dimmed(), cr.message);
+                    total_errors += 1;
+                }
+                checker::ConstraintSeverity::Warning => {
+                    println!("  {} {} {}", "⚠".yellow(), tag.dimmed(), cr.message);
+                    total_warnings += 1;
+                }
+            }
+        }
+
+        if result.constraint_results.is_empty() {
+            println!("  {} All checks passed", "✓".green());
+        }
+        println!();
+    }
+
+    if specs.len() > 1 {
+        let composition_result = checker.check_composition(specs);
+        for cr in &composition_result.constraint_results {
+            let tag = format!("[{}|{}]", cr.kind, cr.tier);
+            match cr.severity {
+                checker::ConstraintSeverity::Error => {
+                    println!("  {} {} {}", "✗".red(), tag.dimmed(), cr.message);
+                    total_errors += 1;
+                }
+                checker::ConstraintSeverity::Warning => {
+                    println!("  {} {} {}", "⚠".yellow(), tag.dimmed(), cr.message);
+                    total_warnings += 1;
+                }
+            }
+        }
+    }
+
+    // Ignore LLM config for dependency projects (rules are project-local)
+    let _ = (source_root, llm_config);
+
+    println!("{}", "=".repeat(40));
+    if total_errors > 0 {
+        println!(
+            "{} {} error(s), {} warning(s)",
+            "FAILED:".red().bold(),
+            total_errors,
+            total_warnings
+        );
+        std::process::exit(1);
+    } else {
+        println!("{} All specs validated", "PASSED:".green().bold());
+    }
+    Ok(())
+}
+
+fn cmd_deps(project_root: &PathBuf) -> Result<()> {
+    println!("{}", "Dependency Graph".bold().cyan());
+    println!("{}", "=".repeat(40));
+    println!();
+
+    let config = load_project_config_at(project_root);
+    let name = config.name.as_deref().unwrap_or("(unnamed)");
+
+    if config.dependencies.is_empty() {
+        println!("{} {} has no dependencies", "ℹ".blue(), name);
+        return Ok(());
+    }
+
+    let graph = dependency::DependencyGraph::resolve(project_root)?;
+
+    // Print tree
+    println!("{} (root)", graph.root_project().name.bold());
+    let deps = graph.root_project().dependency_names.clone();
+    for (i, dep_name) in deps.iter().enumerate() {
+        let is_last = i == deps.len() - 1;
+        let prefix = if is_last { "└── " } else { "├── " };
+        if let Some(proj) = graph.get(dep_name) {
+            println!("{}{} ({})", prefix, proj.name.cyan(), proj.root.display());
+            print_dep_tree(&graph, proj, if is_last { "    " } else { "│   " });
+        }
+    }
+
+    println!();
+    println!(
+        "{} {} project(s) total",
+        "ℹ".blue(),
+        graph.projects.len()
+    );
+
+    Ok(())
+}
+
+fn print_dep_tree(graph: &dependency::DependencyGraph, proj: &dependency::ResolvedProject, indent: &str) {
+    for (i, dep_name) in proj.dependency_names.iter().enumerate() {
+        let is_last = i == proj.dependency_names.len() - 1;
+        let prefix = if is_last { "└── " } else { "├── " };
+        if let Some(dep) = graph.get(dep_name) {
+            println!("{}{}{} ({})", indent, prefix, dep.name.cyan(), dep.root.display());
+            let child_indent = format!("{}{}", indent, if is_last { "    " } else { "│   " });
+            print_dep_tree(graph, dep, &child_indent);
+        }
+    }
 }
 
 fn cmd_init(source: &PathBuf, language: Option<&str>, output: Option<&PathBuf>) -> Result<()> {
@@ -837,7 +1129,23 @@ fn cmd_diff(spec_path: &PathBuf, source_path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn cmd_toposort(spec_path: &PathBuf) -> Result<()> {
+fn cmd_toposort(spec_path: &PathBuf, all: bool) -> Result<()> {
+    // If --all, resolve the full dependency graph and print projects + modules
+    if all {
+        let graph = dependency::DependencyGraph::resolve(&PathBuf::from("."))?;
+        for proj in &graph.projects {
+            println!("{} {}", "project:".bold(), proj.name.cyan());
+            for spec in &proj.specs {
+                if let Some(ref sp) = spec.source_path {
+                    println!("  {}", sp);
+                } else {
+                    println!("  {}", spec.module);
+                }
+            }
+        }
+        return Ok(());
+    }
+
     let specs = load_specs(spec_path)?;
 
     if specs.is_empty() {

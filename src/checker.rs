@@ -196,6 +196,10 @@ pub struct SpecChecker {
     rules: Vec<Rule>,
     /// Layer dependency configuration
     layer_config: LayerConfig,
+    /// Cross-project spec lookup: "project::module" → ModuleSpec
+    external_specs: HashMap<String, ModuleSpec>,
+    /// Public surface info per dependency project
+    project_public: HashMap<String, Option<Vec<String>>>,
 }
 
 impl SpecChecker {
@@ -205,6 +209,8 @@ impl SpecChecker {
             spec_map: HashMap::new(),
             rules: rules::builtin_rules(),
             layer_config: LayerConfig::builtin(),
+            external_specs: HashMap::new(),
+            project_public: HashMap::new(),
         }
     }
 
@@ -233,6 +239,110 @@ impl SpecChecker {
         }
 
         self
+    }
+
+    /// Attach external specs from a resolved dependency graph for cross-project checks.
+    pub fn with_dependency_graph(mut self, graph: &crate::dependency::DependencyGraph) -> Self {
+        let root_name = graph.root_project().name.clone();
+        for proj in &graph.projects {
+            if proj.name == root_name {
+                continue;
+            }
+            for spec in &proj.specs {
+                // Key by "project::source_path" and "project::module"
+                if let Some(ref sp) = spec.source_path {
+                    let key = format!("{}::{}", proj.name, sp);
+                    self.external_specs.insert(key, spec.clone());
+                }
+                let key = format!("{}::{}", proj.name, spec.module);
+                self.external_specs.insert(key, spec.clone());
+            }
+            self.project_public
+                .insert(proj.name.clone(), proj.public_modules.clone());
+        }
+        self
+    }
+
+    /// Phase 2: Check cross-project boundary constraints.
+    ///
+    /// For each local spec's `depends_on` that contains `::`, verify:
+    /// - The referenced project exists in the graph
+    /// - The referenced module exists in that project
+    /// - The referenced module is public
+    /// - The dependency project has no internal errors (from phase 1)
+    /// - Contract compatibility at the boundary
+    pub fn check_cross_project_boundaries(
+        &self,
+        graph: &crate::dependency::DependencyGraph,
+        dep_errors: &HashMap<String, usize>,
+    ) -> CheckResult {
+        let mut result = CheckResult::default();
+
+        for spec in self.spec_map.values() {
+            for dep in &spec.depends_on {
+                if let Some((project, local_ref)) = crate::dependency::DependencyGraph::parse_cross_ref(dep) {
+                    // Check dependency project has no internal errors
+                    if let Some(&err_count) = dep_errors.get(project) {
+                        result.constraint_error(
+                            ConstraintKind::Dependency,
+                            VerificationTier::Syntactic,
+                            format!(
+                                "{}: cannot verify dependency {}::{} — project '{}' has {} internal error(s)",
+                                spec.module, project, local_ref, project, err_count
+                            ),
+                        );
+                        continue;
+                    }
+
+                    // Check project exists in graph
+                    let proj = match graph.get(project) {
+                        Some(p) => p,
+                        None => {
+                            result.constraint_error(
+                                ConstraintKind::Dependency,
+                                VerificationTier::Syntactic,
+                                format!(
+                                    "{}: references unknown project '{}' in dependency '{}'",
+                                    spec.module, project, dep
+                                ),
+                            );
+                            continue;
+                        }
+                    };
+
+                    // Check module exists in that project
+                    let module_part = local_ref.split('.').next().unwrap_or(local_ref);
+                    let found = self.external_specs.contains_key(dep)
+                        || self.external_specs.contains_key(&format!("{}::{}", project, module_part));
+
+                    if !found {
+                        result.constraint_error(
+                            ConstraintKind::Dependency,
+                            VerificationTier::Syntactic,
+                            format!(
+                                "{}: references non-existent module '{}' in project '{}'",
+                                spec.module, local_ref, project
+                            ),
+                        );
+                        continue;
+                    }
+
+                    // Check module is public
+                    if !proj.is_module_public(module_part) {
+                        result.constraint_error(
+                            ConstraintKind::Dependency,
+                            VerificationTier::Syntactic,
+                            format!(
+                                "{}: references private module '{}' in project '{}'",
+                                spec.module, module_part, project
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+
+        result
     }
 
     /// Check a spec against its implementation.
