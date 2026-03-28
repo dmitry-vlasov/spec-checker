@@ -10,13 +10,17 @@ $ARGUMENTS — Optional: a source file path (e.g., `src/bridge.rs`) to process a
 
 ## What to fill in
 
-For each **function** in `exposes`:
+For the **module**:
+- `description`: A concise one-sentence summary of the module's purpose. Examples: "Cross-chain token bridge handling deposits and signature-verified withdrawals", "Parses YAML spec files into typed in-memory structures"
+- `invariants`: Properties that always hold for this module. Examples: "withdrawn[token] <= deposited[token]", "no panic in public API", "no unsafe code", "thread-safe: all public methods are Send + Sync", "all errors are logged before propagation"
+
+For each **entity** in `exposes` (functions, types, variables):
+- `description`: A concise one-sentence summary of the entity's purpose. Examples: "Accepts a token deposit, updating the bridge's balance tracking", "Tracks deposited balances and admin configuration"
+
+For each **function** in `exposes` (additionally):
 - `requires`: Preconditions that must hold before calling the function. Examples: "amount > 0", "connection is open", "input is not empty", "caller has admin role"
 - `ensures`: Postconditions guaranteed after the function returns. Examples: "returns sorted list", "balance increases by amount", "emits DepositEvent", "file handle is closed on error"
 - `modifies`: State that the function changes. Examples: "self.balance", "global registry", "database connection pool"
-
-For the **module**:
-- `invariants`: Properties that always hold for this module. Examples: "withdrawn[token] <= deposited[token]", "no panic in public API", "no unsafe code", "thread-safe: all public methods are Send + Sync", "all errors are logged before propagation"
 
 For **protocols** (if the module has lifecycle or stateful patterns):
 - Refine `protocol.states`, `protocol.transitions`, and `protocol.balanced_pairs` if the auto-detected ones are incomplete
@@ -34,12 +38,14 @@ Write specs that are:
 
 ```yaml
 module: example
+description: "Parses and caches configuration from external sources"  # YOU FILL THIS
 source_path: src/example.rs
 language: rust
 
 exposes:
   my_function:
     kind: function
+    description: "Loads config from the given input, caching the result"  # YOU FILL THIS
     type_constraints:
       - "equals(param(input), String)"     # Already filled by init
       - "equals(return, Result)"            # Already filled by init
@@ -54,6 +60,7 @@ exposes:
 
   MyStruct:
     kind: type
+    description: "Holds parsed configuration with a non-empty name"  # YOU FILL THIS
     type_constraints:
       - "is_product(Self)"                  # Already filled
       - "has_field(Self, name)"             # Already filled
@@ -96,7 +103,7 @@ If a single file was provided as argument, only process that file.
 1. **Read the source file** to understand what the code does
 2. **Read its existing spec** (the `.spec.yaml` file) to see what's already there
 3. **Read the specs of its dependencies** (already filled from earlier iterations) for context on what contracts the dependencies guarantee
-4. **Fill in the behavioral fields** — requires, ensures, modifies, invariants
+4. **Fill in the behavioral fields** — description, requires, ensures, modifies, invariants
 5. **Write the updated spec** back to the `.spec.yaml` file
 6. **Report progress** — tell the user which file you just completed
 
@@ -109,12 +116,12 @@ spec-checker check .
 
 This runs structural checks (without LLM) to catch any format errors or broken references in the specs you wrote. Fix any errors reported.
 
-If `spec-checker` is not installed, manually verify that each spec file is valid YAML and that the fields you added (`requires`, `ensures`, `modifies`, `invariants`) are string arrays.
+If `spec-checker` is not installed, manually verify that each spec file is valid YAML and that the fields you added (`description`, `requires`, `ensures`, `modifies`, `invariants`) are valid (`description` is a string, the rest are string arrays).
 
 ## Important rules
 
 - **Never modify `type_constraints`** — these are structural and already correct from `init`
-- **Never remove existing fields** — only add to `requires`, `ensures`, `modifies`, `invariants`
+- **Never remove existing fields** — only add to `description`, `requires`, `ensures`, `modifies`, `invariants`
 - **Preserve YAML formatting** — keep the existing structure, comments, and field order
 - **Read before writing** — always read the source code before writing specs for it
 - **Be conservative** — only write specs you're confident about from reading the code. It's better to have fewer accurate specs than many speculative ones.

@@ -2,6 +2,7 @@
 # Inherits: language=rust, context=core, stability=stable (root)
 
 module: behavioral
+description: "Behavioral invariant checker: classifies invariants into static (pattern-matched) and behavioral (LLM-verified) tiers"
 source_path: src/behavioral.rs
 
 layer: application
@@ -9,6 +10,7 @@ layer: application
 exposes:
   InvariantTier:
     kind: type
+    description: "Tier of invariant checking: Static (code pattern matching) or Behavioral (LLM comprehension)"
     type_constraints:
       - "is_sum(Self)"
       - "has_variant(Self, Static)"
@@ -16,6 +18,7 @@ exposes:
 
   ClassifiedInvariant:
     kind: type
+    description: "An invariant classified by tier and annotated with its source module and path"
     type_constraints:
       - "is_product(Self)"
       - "cloneable"
@@ -24,6 +27,7 @@ exposes:
 
   InvariantResult:
     kind: type
+    description: "Result of checking a single invariant: satisfies flag, reasoning text, and verification tier"
     type_constraints:
       - "is_product(Self)"
       - "serializable"
@@ -33,6 +37,7 @@ exposes:
 
   LlmCheckMode:
     kind: type
+    description: "Controls LLM behavioral checking: Off, DryRun (classify only), CachedOnly, or Full"
     type_constraints:
       - "is_sum(Self)"
       - "has_variant(Self, Off)"
@@ -42,6 +47,7 @@ exposes:
 
   BehavioralSummary:
     kind: type
+    description: "Aggregate summary of behavioral check results: static/LLM pass/fail counts, cached, skipped, and failure details"
     type_constraints:
       - "is_product(Self)"
       - "has_field(Self, static_passed)"
@@ -54,6 +60,7 @@ exposes:
 
   classify_invariant:
     kind: function
+    description: "Classifies an invariant text as Static or Behavioral based on keyword patterns"
     type_constraints:
       - "equals(param(text), str)"
       - "equals(return, InvariantTier)"
@@ -64,6 +71,7 @@ exposes:
 
   collect_invariants:
     kind: function
+    description: "Gathers all module-level invariants and function-level requires/ensures from a spec, classified by tier"
     type_constraints:
       - "equals(param(spec), ModuleSpec)"
       - "equals(con(return), Vec)"
@@ -73,6 +81,7 @@ exposes:
 
   check_static_invariant:
     kind: function
+    description: "Attempts to verify an invariant via static code patterns; returns None if unrecognized"
     ensures:
       - Returns Some result for invariants matching static patterns
       - Returns None for unrecognized invariant text
@@ -81,6 +90,7 @@ exposes:
 
   check_behavioral:
     kind: function
+    description: "Orchestrates behavioral checking: routes static invariants to pattern matchers, behavioral ones through LLM with caching"
     ensures:
       - Routes static invariants to pattern matchers
       - Routes behavioral invariants through LLM check mode
@@ -89,6 +99,7 @@ exposes:
 
   strip_tests:
     kind: function
+    description: "Removes #[cfg(test)] module blocks from source code before static analysis"
     type_constraints:
       - "equals(param(source), str)"
       - "equals(return, String)"
@@ -98,6 +109,7 @@ exposes:
 
   cache_key:
     kind: function
+    description: "Generates a deterministic SHA256 cache key from source code and invariant text"
     type_constraints:
       - "equals(return, String)"
     ensures:

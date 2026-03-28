@@ -3,16 +3,19 @@
 # Inherits: layer=infrastructure, forbidden_deps=[clap, colored] (extractors)
 
 module: rust
+description: "Extracts module structure from Rust source files using syn AST parsing"
 source_path: src/extractors/rust.rs
 
 exposes:
   RustExtractor:
     kind: type
+    description: "Rust-specific extractor using syn for proper AST parsing of functions, types, and imports"
     type_constraints:
       - "is_product(Self)"
 
   RustExtractor.new:
     kind: function
+    description: "Creates a new RustExtractor instance"
     type_constraints:
       - "equals(return, Self)"
 

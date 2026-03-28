@@ -2,6 +2,7 @@
 # Inherits: language=rust, context=core, stability=stable (root)
 
 module: spec
+description: "Core data structures for module specs, defaults resolution, layer/stability models, and protocol definitions"
 source_path: src/spec.rs
 
 layer: domain
@@ -9,6 +10,7 @@ layer: domain
 exposes:
   ModuleSpec:
     kind: type
+    description: "Complete specification for a single source module: exposed entities, dependencies, layers, invariants, and protocols"
     type_constraints:
       - "is_product(Self)"
       - "serializable"
@@ -36,6 +38,7 @@ exposes:
 
   ExposeSpec:
     kind: type
+    description: "Specification for a single exposed entity (function or type) within a module"
     type_constraints:
       - "is_product(Self)"
       - "serializable"
@@ -51,6 +54,7 @@ exposes:
 
   SpecDefaults:
     kind: type
+    description: "Directory-level defaults that cascade from root to leaf, with scalar override and list merge semantics"
     type_constraints:
       - "is_product(Self)"
       - "serializable"
@@ -65,12 +69,14 @@ exposes:
 
   Layer:
     kind: type
+    description: "A named architectural layer (always lowercased) used for dependency direction enforcement"
     type_constraints:
       - "serializable"
       - "cloneable"
 
   Stability:
     kind: type
+    description: "Module stability level controlling allowed dependency direction: Stable > Normal > Volatile"
     type_constraints:
       - "is_sum(Self)"
       - "serializable"
@@ -81,6 +87,7 @@ exposes:
 
   LayerConfig:
     kind: type
+    description: "Configuration of allowed layer dependencies, supporting built-in 4-layer, linear, or DAG models"
     type_constraints:
       - "is_product(Self)"
       - "cloneable"
@@ -88,6 +95,7 @@ exposes:
 
   ProtocolSpec:
     kind: type
+    description: "State machine specification for lifecycle or call-sequence protocols on a module's API"
     type_constraints:
       - "is_product(Self)"
       - "serializable"
@@ -100,6 +108,7 @@ exposes:
 
   Transition:
     kind: type
+    description: "A single state machine transition: from-state, triggering call, to-state"
     type_constraints:
       - "is_product(Self)"
       - "serializable"
@@ -110,6 +119,7 @@ exposes:
 
   SubsystemSpec:
     kind: type
+    description: "Specification for a subsystem grouping multiple modules with shared invariants and dependency constraints"
     type_constraints:
       - "is_product(Self)"
       - "serializable"
@@ -122,6 +132,7 @@ exposes:
 
   SubsystemExposeSpec:
     kind: type
+    description: "A subsystem-level exposed interface that delegates to a specific module function"
     type_constraints:
       - "is_product(Self)"
       - "serializable"
@@ -131,6 +142,7 @@ exposes:
 
   ModuleSpec.from_extracted:
     kind: function
+    description: "Converts an ExtractedModule into a ModuleSpec, populating exposes, emits, state, and protocol"
     type_constraints:
       - "equals(param(extracted), ExtractedModule)"
       - "equals(return, Self)"
@@ -143,6 +155,7 @@ exposes:
 
   ModuleSpec.apply_defaults:
     kind: function
+    description: "Applies directory-level defaults to unset fields in this spec, merging lists and overriding scalars"
     ensures:
       - Fills in missing scalar fields from defaults
       - Merges list fields (union) from defaults
@@ -150,6 +163,7 @@ exposes:
 
   SpecDefaults.merge:
     kind: function
+    description: "Merges parent and child defaults: child scalars win, list fields are unioned"
     type_constraints:
       - "equals(param(0), Self)"
       - "equals(return, SpecDefaults)"
@@ -159,6 +173,7 @@ exposes:
 
   Layer.new:
     kind: function
+    description: "Creates a new Layer, lowercasing the input name for case-insensitive comparison"
     type_constraints:
       - "equals(param(name), str)"
       - "equals(return, Self)"
@@ -167,6 +182,7 @@ exposes:
 
   LayerConfig.builtin:
     kind: function
+    description: "Returns the default 4-layer model: infrastructure < domain < application < interface"
     type_constraints:
       - "equals(return, Self)"
     ensures:
@@ -174,6 +190,7 @@ exposes:
 
   LayerConfig.from_linear:
     kind: function
+    description: "Builds a layer config from an ordered list where each layer may depend on all layers below it"
     type_constraints:
       - "equals(return, Self)"
     ensures:
@@ -181,6 +198,7 @@ exposes:
 
   LayerConfig.from_dag:
     kind: function
+    description: "Builds a layer config from an explicit DAG where each layer lists its allowed dependencies"
     type_constraints:
       - "equals(return, Self)"
     ensures:
@@ -188,6 +206,7 @@ exposes:
 
   LayerConfig.can_depend_on:
     kind: function
+    description: "Checks whether one layer is allowed to depend on another according to the configured model"
     type_constraints:
       - "equals(param(0), Self)"
       - "equals(return, bool)"
@@ -197,6 +216,7 @@ exposes:
 
   Stability.can_depend_on:
     kind: function
+    description: "Checks whether a module at this stability level may depend on a module at the target stability"
     type_constraints:
       - "equals(param(0), Self)"
       - "equals(return, bool)"
@@ -207,6 +227,7 @@ exposes:
 
   resolve_defaults:
     kind: function
+    description: "Walks from root to spec directory, loading and merging _defaults.yaml at each level"
     type_constraints:
       - "equals(param(spec_dir), Path)"
       - "equals(param(root_dir), Path)"

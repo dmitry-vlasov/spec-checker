@@ -105,15 +105,14 @@ enum Commands {
         path: PathBuf,
     },
 
-    /// Install Claude Code skills (fill-behavioral-specs by default; use --only for others)
+    /// Install Claude Code skills (default skills if no name given; "all" for everything)
     InitSkill {
         /// Install globally (~/.claude/commands/) instead of project-local (.claude/commands/)
         #[arg(long)]
         global: bool,
 
-        /// Install only specific skill(s): fill-behavioral-specs, flow9
-        #[arg(long, value_delimiter = ',')]
-        only: Vec<String>,
+        /// Skill name to install (e.g. fill-behavioral-specs, flow9, or "all")
+        skill: Option<String>,
     },
 }
 
@@ -150,7 +149,7 @@ fn main() -> Result<()> {
         } => cmd_init(&source, language.as_deref(), output.as_ref()),
         Commands::Diff { spec, source } => cmd_diff(&spec, &source),
         Commands::Toposort { path } => cmd_toposort(&path),
-        Commands::InitSkill { global, only } => cmd_init_skill(global, &only),
+        Commands::InitSkill { global, skill } => cmd_init_skill(global, skill.as_deref()),
     }
 }
 
@@ -940,7 +939,7 @@ fn cmd_toposort(spec_path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn cmd_init_skill(global: bool, only: &[String]) -> Result<()> {
+fn cmd_init_skill(global: bool, skill: Option<&str>) -> Result<()> {
     let all_skills: &[(&str, &str, &[&str], bool)] = &[
         (
             "fill-behavioral-specs",
@@ -971,14 +970,22 @@ fn cmd_init_skill(global: bool, only: &[String]) -> Result<()> {
 
     std::fs::create_dir_all(&target_dir)?;
 
+    let install_all = skill == Some("all");
+
     let mut installed = 0;
     for (name, content, usage_lines, default) in all_skills {
-        if only.is_empty() {
-            if !default {
-                continue;
+        match skill {
+            None => {
+                if !default {
+                    continue;
+                }
             }
-        } else if !only.iter().any(|o| o == name) {
-            continue;
+            Some("all") => {} // install everything
+            Some(s) => {
+                if s != *name {
+                    continue;
+                }
+            }
         }
 
         let target_file = target_dir.join(format!("{}.md", name));
@@ -991,11 +998,12 @@ fn cmd_init_skill(global: bool, only: &[String]) -> Result<()> {
         installed += 1;
     }
 
-    if installed == 0 {
+    if installed == 0 && !install_all {
         let available: Vec<&str> = all_skills.iter().map(|(n, _, _, _)| *n).collect();
         println!(
-            "{} No matching skills. Available: {}",
+            "{} No matching skill '{}'. Available: {}, all",
             "⚠".yellow(),
+            skill.unwrap_or(""),
             available.join(", ")
         );
     }

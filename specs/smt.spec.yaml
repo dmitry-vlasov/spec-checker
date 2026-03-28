@@ -2,6 +2,7 @@
 # Inherits: language=rust, context=core, stability=stable (root)
 
 module: smt
+description: "SMT solver integration via z3 subprocess for formal verification of numeric and state-ownership constraints"
 source_path: src/smt.rs
 
 layer: infrastructure    # External tool integration
@@ -9,6 +10,7 @@ layer: infrastructure    # External tool integration
 exposes:
   SmtQuery:
     kind: type
+    description: "Builder for SMT-LIB2 queries with integer/boolean declarations and assertions"
     type_constraints:
       - "is_product(Self)"
       - "cloneable"
@@ -17,6 +19,7 @@ exposes:
 
   SmtResult:
     kind: type
+    description: "Result of an SMT satisfiability check: Sat, Unsat, Unknown, or Error"
     type_constraints:
       - "is_sum(Self)"
       - "cloneable"
@@ -27,6 +30,7 @@ exposes:
 
   SmtQuery.new:
     kind: function
+    description: "Creates an empty SMT query with no declarations or assertions"
     type_constraints:
       - "equals(return, Self)"
     ensures:
@@ -34,6 +38,7 @@ exposes:
 
   SmtQuery.to_smtlib2:
     kind: function
+    description: "Serializes the query to SMT-LIB2 format with set-logic, declarations, assertions, and check-sat"
     type_constraints:
       - "equals(param(0), Self)"
       - "equals(return, String)"
@@ -43,6 +48,7 @@ exposes:
 
   SmtQuery.check_sat:
     kind: function
+    description: "Invokes z3 as subprocess with the query and parses the result"
     type_constraints:
       - "equals(param(0), Self)"
       - "equals(return, SmtResult)"
@@ -52,6 +58,7 @@ exposes:
 
   solver_available:
     kind: function
+    description: "Checks whether the z3 binary is accessible on PATH"
     type_constraints:
       - "equals(return, bool)"
     ensures:
@@ -60,6 +67,7 @@ exposes:
 
   check_state_ownership_consistency:
     kind: function
+    description: "Encodes cross-module state ownership as mutual-exclusion SMT constraints and checks for conflicts"
     type_constraints:
       - "fallible(return)"
     ensures:
@@ -70,6 +78,7 @@ exposes:
 
   check_numeric_constraints:
     kind: function
+    description: "Checks satisfiability of integer constraints with declared bounds"
     type_constraints:
       - "equals(return, SmtResult)"
     ensures:
@@ -79,6 +88,7 @@ exposes:
 
   check_implication:
     kind: function
+    description: "Checks logical implication validity by negating the conclusion and checking for unsatisfiability"
     type_constraints:
       - "equals(return, SmtResult)"
     ensures:

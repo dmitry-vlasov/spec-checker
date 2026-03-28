@@ -3,16 +3,19 @@
 # Inherits: layer=infrastructure, forbidden_deps=[clap, colored] (extractors)
 
 module: solidity
+description: "Extracts module structure from Solidity source files using solc AST or regex fallback"
 source_path: src/extractors/solidity.rs
 
 exposes:
   SolidityExtractor:
     kind: type
+    description: "Solidity-specific extractor with dual-mode parsing: solc AST when available, regex fallback otherwise"
     type_constraints:
       - "is_product(Self)"
 
   SolidityExtractor.new:
     kind: function
+    description: "Creates a new SolidityExtractor instance"
     type_constraints:
       - "equals(return, Self)"
 

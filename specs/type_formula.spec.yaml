@@ -2,6 +2,7 @@
 # Inherits: language=rust, context=core, stability=stable (root)
 
 module: type_formula
+description: "Type formula DSL: parser and evaluator for type-level predicates and logical connectives over type structure"
 source_path: src/type_formula.rs
 
 layer: domain
@@ -9,6 +10,7 @@ layer: domain
 exposes:
   TypeExpr:
     kind: type
+    description: "AST for type expressions: Self, literals, field/param/return access, constructors, and type combinators"
     type_constraints:
       - "is_sum(Self)"
       - "cloneable"
@@ -28,6 +30,7 @@ exposes:
 
   Predicate:
     kind: type
+    description: "Type predicates that can be evaluated against extracted type information"
     type_constraints:
       - "is_sum(Self)"
       - "cloneable"
@@ -42,6 +45,7 @@ exposes:
 
   Formula:
     kind: type
+    description: "Logical formula combining predicates with And, Or, Not, and Implies connectives"
     type_constraints:
       - "is_sum(Self)"
       - "cloneable"
@@ -53,6 +57,7 @@ exposes:
 
   ParamRef:
     kind: type
+    description: "Reference to a function parameter by positional index or by name"
     type_constraints:
       - "is_sum(Self)"
       - "cloneable"
@@ -61,6 +66,7 @@ exposes:
 
   ParseError:
     kind: type
+    description: "Error from formula parsing, with a human-readable message and character position"
     type_constraints:
       - "is_product(Self)"
       - "cloneable"
@@ -71,6 +77,7 @@ exposes:
 
   EvalError:
     kind: type
+    description: "Error from formula evaluation when type context is missing or a predicate cannot be resolved"
     type_constraints:
       - "is_product(Self)"
       - "cloneable"
@@ -80,6 +87,7 @@ exposes:
 
   parse_formula:
     kind: function
+    description: "Parses a type formula string into a Formula AST using recursive descent"
     type_constraints:
       - "equals(param(input), str)"
       - "fallible(return)"
@@ -90,6 +98,7 @@ exposes:
 
   evaluate_formula:
     kind: function
+    description: "Evaluates a Formula against a type evaluation context, returning true/false or an EvalError"
     type_constraints:
       - "equals(param(formula), Formula)"
       - "fallible(return)"
@@ -100,6 +109,7 @@ exposes:
 
   parse_type_repr_from_str:
     kind: function
+    description: "Parses a type string into a TypeRepr AST, handling references, slices, arrays, tuples, fn pointers, and generics"
     type_constraints:
       - "equals(param(s), str)"
       - "fallible(return)"

@@ -3,6 +3,7 @@
 # Overrides: context=cli, stability=normal, layer=interface
 
 module: main
+description: "CLI entry point: parses commands (check, init, diff, toposort) and orchestrates spec-checker operations"
 source_path: src/main.rs
 
 layer: interface

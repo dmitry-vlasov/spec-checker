@@ -3,16 +3,19 @@
 # Inherits: layer=infrastructure, forbidden_deps=[clap, colored] (extractors)
 
 module: flow9
+description: "Extracts module structure from Flow9 source files using a recursive descent parser"
 source_path: src/extractors/flow9.rs
 
 exposes:
   Flow9Extractor:
     kind: type
+    description: "Flow9-specific extractor using a hand-written recursive descent parser for imports, types, and functions"
     type_constraints:
       - "is_product(Self)"
 
   Flow9Extractor.new:
     kind: function
+    description: "Creates a new Flow9Extractor instance"
     type_constraints:
       - "equals(return, Self)"
 

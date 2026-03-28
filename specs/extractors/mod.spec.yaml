@@ -3,17 +3,20 @@
 # Inherits: layer=infrastructure, forbidden_deps=[clap, colored] (extractors)
 
 module: extractors
+description: "Dispatcher for language-specific source code extractors, providing the Extractor trait and ExtractedModule output type"
 source_path: src/extractors/mod.rs
 
 exposes:
   Extractor:
     kind: type
+    description: "Trait for language-specific extractors that parse source files into ExtractedModule"
     ensures:
       - Trait for language-specific extractors
       - Single method extract() returning Result<ExtractedModule>
 
   ExtractedModule:
     kind: type
+    description: "Structured output from extraction: public/private functions, imports, events, state variables, and rich type/function info"
     type_constraints:
       - "is_product(Self)"
       - "cloneable"
@@ -32,6 +35,7 @@ exposes:
 
   get_extractor:
     kind: function
+    description: "Returns the appropriate language extractor for the given language name or alias"
     type_constraints:
       - "equals(param(language), str)"
       - "fallible(return)"

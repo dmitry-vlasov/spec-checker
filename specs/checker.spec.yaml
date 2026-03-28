@@ -2,6 +2,7 @@
 # Inherits: language=rust, context=core, stability=stable (root)
 
 module: checker
+description: "Core verification orchestrator: runs structural, dependency, type-formula, and SMT checks against specs"
 source_path: src/checker.rs
 
 layer: application       # Orchestrates domain + infrastructure
@@ -9,6 +10,7 @@ layer: application       # Orchestrates domain + infrastructure
 exposes:
   ConstraintKind:
     kind: type
+    description: "Category of a spec constraint: Structural, Dependency, Architectural, Event, TypeConstraint, or Protocol"
     type_constraints:
       - "is_sum(Self)"
       - "has_variant(Self, Structural)"
@@ -20,6 +22,7 @@ exposes:
 
   VerificationTier:
     kind: type
+    description: "The verification method that decided a constraint result: Syntactic, RulesEngine, TypeFormula, or Smt"
     type_constraints:
       - "is_sum(Self)"
       - "has_variant(Self, Syntactic)"
@@ -29,6 +32,7 @@ exposes:
 
   ConstraintSeverity:
     kind: type
+    description: "Severity of a constraint result: Error or Warning"
     type_constraints:
       - "is_sum(Self)"
       - "has_variant(Self, Error)"
@@ -36,6 +40,7 @@ exposes:
 
   ConstraintResult:
     kind: type
+    description: "A single constraint check outcome tagged with kind, verification tier, severity, and message"
     type_constraints:
       - "is_product(Self)"
       - "cloneable"
@@ -46,6 +51,7 @@ exposes:
 
   CheckResult:
     kind: type
+    description: "Aggregated check results: lists of error/warning strings plus detailed constraint results"
     type_constraints:
       - "is_product(Self)"
       - "has_field(Self, errors)"
@@ -56,6 +62,7 @@ exposes:
 
   SpecChecker:
     kind: type
+    description: "Stateful checker holding source root, spec map, rules, and layer config for running verifications"
     type_constraints:
       - "is_product(Self)"
       - "has_field(Self, source_root)"
@@ -65,6 +72,7 @@ exposes:
 
   SpecChecker.new:
     kind: function
+    description: "Creates a checker initialized with built-in rules and the given source root"
     type_constraints:
       - "equals(param(source_root), PathBuf)"
       - "equals(return, Self)"
@@ -73,6 +81,7 @@ exposes:
 
   SpecChecker.with_specs:
     kind: function
+    description: "Loads a set of specs into the checker's map for cross-module verification"
     type_constraints:
       - "equals(param(0), Self)"
       - "equals(return, Self)"
@@ -81,6 +90,7 @@ exposes:
 
   SpecChecker.with_rules_config:
     kind: function
+    description: "Applies rules configuration: disables built-ins, adds custom rules, sets custom layer config"
     type_constraints:
       - "equals(param(0), Self)"
       - "equals(return, Self)"
@@ -91,6 +101,7 @@ exposes:
 
   SpecChecker.check:
     kind: function
+    description: "Runs all structural, dependency, architectural, type-formula, and protocol checks against a single spec"
     type_constraints:
       - "equals(param(0), Self)"
       - "equals(param(spec), ModuleSpec)"
@@ -108,6 +119,7 @@ exposes:
 
   SpecChecker.check_composition:
     kind: function
+    description: "Verifies cross-module properties: event subscribe/emit matching, contract compatibility, and state ownership"
     type_constraints:
       - "equals(param(0), Self)"
       - "equals(return, CheckResult)"
@@ -119,6 +131,7 @@ exposes:
 
   SpecChecker.check_subsystem:
     kind: function
+    description: "Validates a subsystem spec: module existence, delegation targets, and dependency boundaries"
     type_constraints:
       - "equals(param(0), Self)"
       - "equals(return, CheckResult)"

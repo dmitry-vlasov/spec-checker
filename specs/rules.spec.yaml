@@ -2,6 +2,7 @@
 # Inherits: language=rust, context=core, stability=stable (root)
 
 module: rules
+description: "DSL engine for custom and built-in architectural rules, evaluated against module dependency pairs"
 source_path: src/rules.rs
 
 layer: domain
@@ -9,6 +10,7 @@ layer: domain
 exposes:
   Rule:
     kind: type
+    description: "A named architectural rule with when/require conditions and a severity level"
     type_constraints:
       - "is_product(Self)"
       - "serializable"
@@ -21,6 +23,7 @@ exposes:
 
   Severity:
     kind: type
+    description: "Rule violation severity: Error (blocks) or Warning (advisory)"
     type_constraints:
       - "is_sum(Self)"
       - "serializable"
@@ -30,6 +33,7 @@ exposes:
 
   RulesConfig:
     kind: type
+    description: "Project-level rules configuration: custom rules, disabled built-ins, and optional custom layer definitions"
     type_constraints:
       - "is_product(Self)"
       - "serializable"
@@ -40,6 +44,7 @@ exposes:
 
   RuleViolation:
     kind: type
+    description: "A detected rule violation with the rule name, descriptive message, and severity"
     type_constraints:
       - "is_product(Self)"
       - "has_field(Self, rule_name)"
@@ -48,6 +53,7 @@ exposes:
 
   EvalContext:
     kind: type
+    description: "Evaluation context for rule expressions, binding source/target modules and layer config"
     type_constraints:
       - "is_product(Self)"
       - "has_field(Self, source)"
@@ -56,6 +62,7 @@ exposes:
 
   LayersInput:
     kind: type
+    description: "Custom layer config input supporting linear list or explicit DAG format"
     type_constraints:
       - "is_sum(Self)"
       - "serializable"
@@ -65,6 +72,7 @@ exposes:
 
   builtin_rules:
     kind: function
+    description: "Returns the three built-in rules: layer-direction, context-isolation, stability-direction"
     type_constraints:
       - "equals(con(return), Vec)"
     ensures:
@@ -75,6 +83,7 @@ exposes:
 
   check_dependency:
     kind: function
+    description: "Evaluates all rules against a source→target dependency pair, collecting violations"
     type_constraints:
       - "equals(param(source), ModuleSpec)"
       - "equals(param(target), ModuleSpec)"
@@ -87,6 +96,7 @@ exposes:
 
   evaluate:
     kind: function
+    description: "Evaluates a boolean DSL expression against an EvalContext, supporting AND/OR/NOT, comparisons, and method calls"
     type_constraints:
       - "equals(param(expr), str)"
       - "fallible(return)"
