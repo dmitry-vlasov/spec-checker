@@ -914,7 +914,8 @@ fn cmd_init(source: &PathBuf, language: Option<&str>, output: Option<&PathBuf>) 
     let extractor = extractors::get_extractor(&lang)?;
     let extracted = extractor.extract(source)?;
 
-    let spec = ModuleSpec::from_extracted(&extracted);
+    let mut spec = ModuleSpec::from_extracted(&extracted);
+    spec.source_hash = Some(spec::compute_source_hash(source)?);
     let yaml = serde_yaml::to_string(&spec)?;
 
     if let Some(out_path) = output {
@@ -984,7 +985,8 @@ fn cmd_init_dir(
                 continue;
             }
 
-            let spec = ModuleSpec::from_extracted(&extracted);
+            let mut spec = ModuleSpec::from_extracted(&extracted);
+            spec.source_hash = Some(spec::compute_source_hash(&entry)?);
             let yaml = serde_yaml::to_string(&spec)?;
 
             // Build output path: mirror directory structure

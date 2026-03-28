@@ -369,6 +369,23 @@ impl SpecChecker {
         }
 
         let source_path = source_path.unwrap();
+
+        // Source hash staleness check
+        if let Some(stored_hash) = &spec.source_hash {
+            if let Ok(current_hash) = crate::spec::compute_source_hash(&source_path) {
+                if current_hash != *stored_hash {
+                    result.constraint_warning(
+                        ConstraintKind::Structural,
+                        VerificationTier::Syntactic,
+                        format!(
+                            "Specs may be stale for '{}': source file has changed since specs were last updated",
+                            spec.module
+                        ),
+                    );
+                }
+            }
+        }
+
         let language = spec.language.as_deref().unwrap_or("unknown");
 
         // Extract implementation details

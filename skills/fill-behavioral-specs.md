@@ -40,6 +40,7 @@ Write specs that are:
 module: example
 description: "Parses and caches configuration from external sources"  # YOU FILL THIS
 source_path: src/example.rs
+source_hash: a1b2c3d4e5f6a7b8  # Updated automatically — see step 6 below
 language: rust
 
 exposes:
@@ -105,7 +106,12 @@ If a single file was provided as argument, only process that file.
 3. **Read the specs of its dependencies** (already filled from earlier iterations) for context on what contracts the dependencies guarantee
 4. **Fill in the behavioral fields** — description, requires, ensures, modifies, invariants
 5. **Write the updated spec** back to the `.spec.yaml` file
-6. **Report progress** — tell the user which file you just completed
+6. **Update source_hash** — After writing behavioral specs, compute a SHA-256 hash of the source file content (truncated to 16 hex characters) and store it in the `source_hash` field of the spec YAML. This can be done by running:
+   ```bash
+   sha256sum <source-file> | cut -c1-16
+   ```
+   Then set `source_hash: <that value>` in the spec YAML. This prevents `spec-checker check` from flagging the specs as stale.
+7. **Report progress** — tell the user which file you just completed
 
 ### Step 3: Validate
 
@@ -120,6 +126,7 @@ If `spec-checker` is not installed, manually verify that each spec file is valid
 
 ## Important rules
 
+- **Always update `source_hash`** — after writing specs for a file, recompute and store the hash so `spec-checker check` won't flag it as stale
 - **Never modify `type_constraints`** — these are structural and already correct from `init`
 - **Never remove existing fields** — only add to `description`, `requires`, `ensures`, `modifies`, `invariants`
 - **Preserve YAML formatting** — keep the existing structure, comments, and field order

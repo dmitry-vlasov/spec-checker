@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -130,6 +131,11 @@ pub struct ModuleSpec {
     /// Path to source file(s) relative to source root
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
+
+    /// SHA-256 hash (truncated to 16 hex chars) of the source file content
+    /// at the time specs were last generated or updated
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_hash: Option<String>,
 
     /// Publicly exposed entities (functions and types) with their contracts
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -474,6 +480,13 @@ impl Stability {
     }
 }
 
+/// Compute a truncated SHA-256 hash (16 hex chars) of a file's content.
+pub fn compute_source_hash(path: &Path) -> anyhow::Result<String> {
+    let content = std::fs::read(path)?;
+    let hash = Sha256::digest(&content);
+    Ok(format!("{:x}", hash).chars().take(16).collect())
+}
+
 impl ModuleSpec {
     /// Apply directory-level defaults to this spec.
     /// Scalars: only fill in if the spec doesn't already set them.
@@ -698,6 +711,7 @@ impl ModuleSpec {
             description: None,
             language: Some(extracted.language.clone()),
             source_path: extracted.source_path.clone(),
+            source_hash: None,
             exposes,
             depends_on: Vec::new(),
             forbidden_deps: Vec::new(),
