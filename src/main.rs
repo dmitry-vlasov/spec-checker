@@ -845,28 +845,59 @@ fn load_project_config_from_paths(paths_to_try: &[PathBuf]) -> ProjectConfig {
 }
 
 /// Save exclude patterns to .spec-checker.yaml, preserving other fields.
-fn save_exclude_to_config(dir: &PathBuf, excludes: &[String]) -> Result<()> {
+/// Ensure .spec-checker.yaml exists with at least a `name` field.
+/// Optionally updates `exclude` patterns. Preserves all existing fields.
+fn ensure_project_config(dir: &PathBuf, excludes: Option<&[String]>) -> Result<()> {
     let config_path = dir.join(".spec-checker.yaml");
+    let is_new = !config_path.is_file();
 
     // Read existing config as a generic YAML value to preserve all fields
-    let mut doc: serde_yaml::Value = if config_path.is_file() {
+    let mut doc: serde_yaml::Value = if !is_new {
         let content = std::fs::read_to_string(&config_path)?;
         serde_yaml::from_str(&content).unwrap_or(serde_yaml::Value::Mapping(Default::default()))
     } else {
         serde_yaml::Value::Mapping(Default::default())
     };
 
-    // Update the exclude field
     let mapping = doc.as_mapping_mut().ok_or_else(|| anyhow::anyhow!("Config is not a YAML mapping"))?;
-    let exclude_val: Vec<serde_yaml::Value> = excludes.iter().map(|s| serde_yaml::Value::String(s.clone())).collect();
-    mapping.insert(
-        serde_yaml::Value::String("exclude".to_string()),
-        serde_yaml::Value::Sequence(exclude_val),
-    );
 
-    let yaml = serde_yaml::to_string(&doc)?;
-    std::fs::write(&config_path, &yaml)?;
-    println!("{} Saved exclude patterns to {}", "ℹ".blue(), config_path.display());
+    // Ensure `name` field exists (derive from directory name)
+    let name_key = serde_yaml::Value::String("name".to_string());
+    if !mapping.contains_key(&name_key) {
+        let canonical = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+        let dir_name = canonical
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "project".to_string());
+        mapping.insert(name_key, serde_yaml::Value::String(dir_name));
+    }
+
+    // Update exclude patterns if provided
+    if let Some(excludes) = excludes {
+        let exclude_val: Vec<serde_yaml::Value> = excludes.iter().map(|s| serde_yaml::Value::String(s.clone())).collect();
+        mapping.insert(
+            serde_yaml::Value::String("exclude".to_string()),
+            serde_yaml::Value::Sequence(exclude_val),
+        );
+    }
+
+    // Check if anything changed before writing
+    let new_yaml = serde_yaml::to_string(&doc)?;
+    let old_yaml = if !is_new {
+        std::fs::read_to_string(&config_path).ok()
+    } else {
+        None
+    };
+    let changed = old_yaml.as_deref() != Some(&new_yaml);
+
+    if changed {
+        std::fs::write(&config_path, &new_yaml)?;
+        if is_new {
+            println!("{} Created {}", "ℹ".blue(), config_path.display());
+        } else {
+            println!("{} Updated {}", "ℹ".blue(), config_path.display());
+        }
+    }
 
     Ok(())
 }
@@ -1051,10 +1082,9 @@ fn cmd_init_dir(
         merged
     };
 
-    // Save exclude patterns to .spec-checker.yaml if CLI provided new ones
-    if !exclude.is_empty() {
-        save_exclude_to_config(source_dir, &all_excludes)?;
-    }
+    // Ensure .spec-checker.yaml exists with name; update exclude if CLI provided new ones
+    let exclude_update = if exclude.is_empty() { None } else { Some(all_excludes.as_slice()) };
+    ensure_project_config(source_dir, exclude_update)?;
 
     // Compile exclude patterns (resolved relative to source_dir)
     let canonical_source = source_dir.canonicalize().unwrap_or_else(|_| source_dir.clone());
