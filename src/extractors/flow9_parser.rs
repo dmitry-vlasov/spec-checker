@@ -12,6 +12,7 @@ pub fn parse_flow9_source(input: &str) -> Result<Flow9Module, String> {
 struct Parser<'a> {
     input: &'a str,
     pos: usize,
+    #[allow(dead_code)]
     original: &'a str,
 }
 
@@ -175,6 +176,7 @@ impl<'a> Parser<'a> {
 
     /// Starting just after '{', scan to the matching '}'. Returns the body
     /// content (between the braces) and advances past the '}'.
+    #[allow(unused_assignments)]
     fn extract_brace_body(&mut self) -> Result<String, String> {
         let start = self.pos;
         let mut depth = 1i32;

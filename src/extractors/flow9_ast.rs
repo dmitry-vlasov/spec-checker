@@ -8,6 +8,7 @@ pub struct Flow9Module {
     pub declarations: Vec<Decl>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum Decl {
     Import(String),
@@ -56,6 +57,7 @@ pub enum Decl {
 
 #[derive(Debug, Clone)]
 pub struct FunArg {
+    #[allow(dead_code)]
     pub mutable: bool,
     pub name: String,
     pub type_annotation: Option<Flow9Type>,
@@ -70,6 +72,7 @@ pub struct ArgType {
 #[derive(Debug, Clone)]
 pub struct TypeName {
     pub name: String,
+    #[allow(dead_code)]
     pub type_params: Vec<Flow9Type>,
 }
 

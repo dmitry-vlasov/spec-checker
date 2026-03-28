@@ -138,6 +138,7 @@ pub struct CheckResult {
 }
 
 impl CheckResult {
+    #[allow(dead_code)]
     pub fn error(&mut self, msg: impl Into<String>) {
         self.errors.push(msg.into());
     }

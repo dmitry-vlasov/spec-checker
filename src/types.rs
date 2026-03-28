@@ -134,6 +134,7 @@ pub struct VariantInfo {
 pub struct TypeInfo {
     pub name: String,
     pub kind: TypeKind,
+    #[allow(dead_code)]
     pub generics: Vec<GenericParam>,
     /// Fields (for structs)
     pub fields: Vec<FieldInfo>,
@@ -150,6 +151,7 @@ pub struct TypeInfo {
 pub struct ParamInfo {
     pub name: Option<String>,
     pub type_repr: TypeRepr,
+    #[allow(dead_code)]
     pub is_receiver: bool,
 }
 
@@ -159,6 +161,7 @@ pub struct FunctionInfo {
     pub name: String,
     pub params: Vec<ParamInfo>,
     pub return_type: Option<TypeRepr>,
+    #[allow(dead_code)]
     pub generics: Vec<GenericParam>,
 }
 

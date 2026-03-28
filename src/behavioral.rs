@@ -1,9 +1,7 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use crate::extractors::ExtractedModule;
 use crate::spec::ModuleSpec;
 
 // ─── Invariant Classification ─────────────────────────────────────────────────
@@ -22,7 +20,9 @@ pub enum InvariantTier {
 pub struct ClassifiedInvariant {
     pub text: String,
     pub tier: InvariantTier,
+    #[allow(dead_code)]
     pub module_name: String,
+    #[allow(dead_code)]
     pub source_path: Option<String>,
 }
 

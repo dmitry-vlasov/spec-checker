@@ -47,6 +47,7 @@ module: Bridge
 description: "Cross-chain token bridge handling deposits and signature-verified withdrawals"
 language: solidity
 source_path: contracts/Bridge.sol
+source_hash: a1b2c3d4e5f6a7b8  # SHA-256 truncated to 16 hex chars
 
 exposes:
   BridgeState:
@@ -223,6 +224,24 @@ The checker verifies:
 - Warns about unlisted state variables
 - **Cross-module**: `reads_state`/`modifies` references must match some module's `owns_state`
 - **Ownership conflicts**: errors if two modules both claim to own the same state (also verified by SMT solver when z3 is available)
+
+## Spec Staleness Detection
+
+Each spec file can store a `source_hash` — a truncated SHA-256 hash (16 hex chars) of the source file content at the time the spec was last generated or updated:
+
+```yaml
+source_path: src/checker.rs
+source_hash: 6d752c371c15af4a
+```
+
+- **`spec-checker init`** computes and stores the hash automatically
+- **`spec-checker check`** compares the stored hash against the current file content; mismatch produces a warning:
+  ```
+  ⚠ [structural|syntactic] Specs may be stale for 'checker': source file has changed since specs were last updated
+  ```
+- **Backward compatible**: specs without `source_hash` skip the staleness check silently
+
+This is particularly important for behavioral specs (requires/ensures/invariants), which are expensive to regenerate via LLM. The hash check is effectively free — just a file read and SHA-256.
 
 ## Subsystem Specifications
 
@@ -505,14 +524,51 @@ spec-checker init --language rust ./src/ -o ./specs/
 # Diff: show spec vs implementation discrepancies
 spec-checker diff ./specs/main.spec.yaml ./src/main.rs
 
-# Install Claude Code skills (fill-behavioral-specs by default)
+# Install Claude Code skills (fill-behavioral-specs + spec-checker by default)
 spec-checker init-skill
 
 # Install globally
 spec-checker init-skill --global
 
-# Install a specific skill (e.g. flow9 language support)
+# Install a specific skill
 spec-checker init-skill --only flow9
+spec-checker init-skill --only spec-checker
+```
+
+## AI Guidance Skill
+
+Spec-checker includes a Claude Code skill (`spec-checker`) that turns specs into an **AI guidance map** — a compressed semantic model of the codebase that an AI agent consults before reading source code.
+
+### Layered resolution
+
+The skill follows a layered resolution principle, stopping as soon as it has enough information:
+
+1. **Spec descriptions + dependency graph** (~1500 tokens for a whole project)
+2. **Contracts** — requires/ensures/modifies/invariants of specific entities
+3. **Source code** — only when specs are insufficient
+
+### Modes
+
+| Mode | Usage | Purpose |
+|------|-------|---------|
+| `orient` | `/spec-checker orient` | Read all specs, build mental model of the codebase |
+| `ask` | `/spec-checker ask <question>` | Answer questions from specs first, fall through to source if needed |
+| `plan` | `/spec-checker plan <feature>` | Spec-first development: design in specs, then implement |
+| `guard` | `/spec-checker guard` | Snapshot contracts before refactoring, verify preservation after |
+| `impact` | `/spec-checker impact <module>` | Trace dependency graph to show blast radius of changes |
+| `check` | `/spec-checker check` | Run spec-checker, interpret results, offer to fix staleness |
+| `bootstrap` | `/spec-checker bootstrap` | One-command setup for new projects |
+
+### Use cases
+
+- **Refactoring**: use `guard` to ensure semantics don't change
+- **New features**: use `plan` to design specs first, then implement to satisfy them
+- **Q&A**: use `ask` to get answers from specs without reading source
+- **Onboarding**: use `orient` to understand a codebase in seconds
+
+Install the skill:
+```bash
+spec-checker init-skill --only spec-checker
 ```
 
 ## Self-Verification

@@ -567,6 +567,7 @@ struct ProjectConfig {
     #[serde(default)]
     llm: LlmFileConfig,
     #[serde(default)]
+    #[allow(dead_code)]
     rules: Option<String>,
 }
 
@@ -601,6 +602,7 @@ struct LlmFileConfig {
     #[serde(default)]
     context_size: Option<u32>,
     #[serde(default)]
+    #[allow(dead_code)]
     local: Option<LegacyLocalFileConfig>,
 }
 
@@ -1257,6 +1259,21 @@ fn cmd_init_skill(global: bool, skill: Option<&str>) -> Result<()> {
             &[
                 "  /fill-behavioral-specs            Fill behavioral specs for the whole project",
                 "  /fill-behavioral-specs src/foo.rs  Fill specs for a single file",
+            ],
+            true, // installed by default
+        ),
+        (
+            "spec-checker",
+            include_str!("../skills/spec-checker.md"),
+            &[
+                "  /spec-checker help                  Show available modes",
+                "  /spec-checker orient                Build mental model from specs",
+                "  /spec-checker ask <question>         Answer questions from specs first",
+                "  /spec-checker plan <feature>         Spec-first feature development",
+                "  /spec-checker guard                 Guard refactoring against semantic drift",
+                "  /spec-checker impact <module>        Show blast radius of changes",
+                "  /spec-checker check                 Run checks and interpret results",
+                "  /spec-checker bootstrap             One-command setup for new projects",
             ],
             true, // installed by default
         ),

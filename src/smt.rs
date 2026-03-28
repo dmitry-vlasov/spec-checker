@@ -58,6 +58,7 @@ impl SmtQuery {
     }
 
     /// Declare an integer variable
+    #[allow(dead_code)]
     pub fn declare_int(&mut self, name: &str) {
         self.declarations
             .push(format!("(declare-const {} Int)", name));
@@ -76,26 +77,31 @@ impl SmtQuery {
     }
 
     /// Assert that two expressions are equal
+    #[allow(dead_code)]
     pub fn assert_eq(&mut self, a: &str, b: &str) {
         self.assert_raw(&format!("(= {} {})", a, b));
     }
 
     /// Assert that a >= b
+    #[allow(dead_code)]
     pub fn assert_ge(&mut self, a: &str, b: &str) {
         self.assert_raw(&format!("(>= {} {})", a, b));
     }
 
     /// Assert that a > b
+    #[allow(dead_code)]
     pub fn assert_gt(&mut self, a: &str, b: &str) {
         self.assert_raw(&format!("(> {} {})", a, b));
     }
 
     /// Assert that a != b
+    #[allow(dead_code)]
     pub fn assert_ne(&mut self, a: &str, b: &str) {
         self.assert_raw(&format!("(not (= {} {}))", a, b));
     }
 
     /// Assert implication: if `premise` then `conclusion`
+    #[allow(dead_code)]
     pub fn assert_implies(&mut self, premise: &str, conclusion: &str) {
         self.assert_raw(&format!("(=> {} {})", premise, conclusion));
     }
@@ -235,6 +241,7 @@ pub fn check_state_ownership_consistency(
 ///
 /// Takes a list of (variable_name, lower_bound, upper_bound) constraints
 /// and checks if they can all hold simultaneously.
+#[allow(dead_code)]
 pub fn check_numeric_constraints(
     constraints: &[(&str, Option<i64>, Option<i64>)],
 ) -> SmtResult {
@@ -262,6 +269,7 @@ pub fn check_numeric_constraints(
 /// Check if a logical implication holds: does `premises` imply `conclusion`?
 ///
 /// Returns true if the implication is valid (i.e., negation is unsat).
+#[allow(dead_code)]
 pub fn check_implication(
     premises: &[&str],
     conclusion: &str,

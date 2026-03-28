@@ -243,6 +243,7 @@ depends_on:
 external_deps:
   - serde
   - serde_yaml
+  - sha2
 
 forbidden_deps:
   - syn           # belongs in extractors

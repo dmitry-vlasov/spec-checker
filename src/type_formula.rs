@@ -551,6 +551,7 @@ impl<'a> FormulaParser<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn expect_string(&mut self) -> Result<String, ParseError> {
         match self.advance() {
             Some(Token::StringLit(s)) => Ok(s.clone()),

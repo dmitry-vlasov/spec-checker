@@ -483,6 +483,7 @@ fn strip_comments(s: &str) -> String {
     result
 }
 
+#[allow(dead_code)]
 /// Parse struct fields from a string like "field1 : type1, field2 : type2"
 fn parse_struct_fields(fields_str: &str) -> Vec<FieldInfo> {
     // Strip comments first
@@ -532,6 +533,7 @@ fn parse_struct_fields(fields_str: &str) -> Vec<FieldInfo> {
     fields
 }
 
+#[allow(dead_code)]
 /// Parse a flow9 type string into TypeRepr
 fn parse_flow9_type(s: &str) -> TypeRepr {
     let s = s.trim();
@@ -594,6 +596,7 @@ fn parse_flow9_type(s: &str) -> TypeRepr {
     TypeRepr::Named(s.to_string())
 }
 
+#[allow(dead_code)]
 /// Find the position of a top-level `->` (not inside parens/brackets/angles)
 fn find_top_level_arrow(s: &str) -> Option<usize> {
     let chars: Vec<char> = s.chars().collect();
@@ -622,6 +625,7 @@ fn find_top_level_arrow(s: &str) -> Option<usize> {
     None
 }
 
+#[allow(dead_code)]
 /// Parse a comma-separated list of types
 fn parse_type_list(s: &str) -> Vec<TypeRepr> {
     let parts = split_respecting_nesting(s, ',');
@@ -641,6 +645,7 @@ fn parse_type_list(s: &str) -> Vec<TypeRepr> {
         .collect()
 }
 
+#[allow(dead_code)]
 /// Split a string on a delimiter, respecting (), <>, [] nesting
 fn split_respecting_nesting(s: &str, delim: char) -> Vec<String> {
     let mut parts = Vec::new();
@@ -692,6 +697,7 @@ fn split_respecting_nesting(s: &str, delim: char) -> Vec<String> {
     parts
 }
 
+#[allow(dead_code)]
 /// Build FunctionInfo from parsed parameter and return type strings
 fn build_function_info(name: &str, params_str: &str, ret_str: Option<&str>) -> FunctionInfo {
     let params = if params_str.trim().is_empty() {
