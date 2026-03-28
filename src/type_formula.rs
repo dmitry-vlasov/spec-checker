@@ -371,6 +371,14 @@ fn parse_fn_type_literal(chars: &[char], start: usize, i: &mut usize) -> Result<
                         *i += 1;
                     }
                 }
+                'f' if *i + 1 < chars.len() && chars[*i + 1] == 'n'
+                    && (*i + 2 >= chars.len() || chars[*i + 2] == '(') =>
+                {
+                    // Return type is itself a function: fn(...) -> R
+                    let fn_start = *i;
+                    *i += 2; // skip "fn"
+                    parse_fn_type_literal(chars, fn_start, i)?;
+                }
                 c if c.is_alphanumeric() || c == '_' => {
                     // Named type, possibly with generics
                     while *i < chars.len() && (chars[*i].is_alphanumeric() || chars[*i] == '_') {
@@ -1280,6 +1288,11 @@ fn evaluate_predicate(
         Predicate::Equals(a, b) => {
             let repr_a = evaluate_type_expr(a, ctx)?;
             let repr_b = evaluate_type_expr(b, ctx)?;
+            // If either side is Infer (_), the constraint is vacuously true —
+            // we can't verify equality when one side is unknown
+            if repr_a == TypeRepr::Infer || repr_b == TypeRepr::Infer {
+                return Ok(true);
+            }
             // Strip references for language-agnostic comparison
             Ok(strip_references(&repr_a) == strip_references(&repr_b))
         }
