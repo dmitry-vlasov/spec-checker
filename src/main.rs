@@ -82,6 +82,10 @@ enum Commands {
         /// Check a specific dependency project by name
         #[arg(long)]
         project: Option<String>,
+
+        /// Verbose output: show every module check, not just errors/warnings
+        #[arg(short, long)]
+        verbose: bool,
     },
 
     /// Generate spec skeleton from existing code (file or directory)
@@ -153,6 +157,7 @@ fn main() -> Result<()> {
             config,
             shallow,
             project,
+            verbose,
         } => {
             let llm_config = load_llm_config(
                 config.as_ref(),
@@ -162,7 +167,7 @@ fn main() -> Result<()> {
                 llm_api_key.as_deref(),
                 llm_provider.as_deref(),
             );
-            cmd_check(&path, &source, &format, rules.as_ref(), &llm_config, shallow, project.as_deref())
+            cmd_check(&path, &source, &format, rules.as_ref(), &llm_config, shallow, project.as_deref(), verbose)
         }
         Commands::Init {
             source,
@@ -184,6 +189,7 @@ fn cmd_check(
     llm_config: &behavioral::LlmConfig,
     shallow: bool,
     project_filter: Option<&str>,
+    verbose: bool,
 ) -> Result<()> {
     println!("{}", "Spec Checker".bold().cyan());
     println!("{}", "=".repeat(40));
@@ -318,31 +324,35 @@ fn cmd_check(
     let checker = checker;
     let mut total_errors = 0;
     let mut total_warnings = 0;
+    let mut total_passed = 0;
 
     for spec in &specs {
-        println!("{} {}", "Checking:".bold(), spec.module.cyan());
-
         let result = checker.check(spec)?;
 
-        for cr in &result.constraint_results {
-            let tag = format!("[{}|{}]", cr.kind, cr.tier);
-            match cr.severity {
-                checker::ConstraintSeverity::Error => {
-                    println!("  {} {} {}", "✗".red(), tag.dimmed(), cr.message);
-                    total_errors += 1;
-                }
-                checker::ConstraintSeverity::Warning => {
-                    println!("  {} {} {}", "⚠".yellow(), tag.dimmed(), cr.message);
-                    total_warnings += 1;
+        if result.constraint_results.is_empty() {
+            total_passed += 1;
+            if verbose {
+                println!("{} {}", "Checking:".bold(), spec.module.cyan());
+                println!("  {} All checks passed", "✓".green());
+                println!();
+            }
+        } else {
+            println!("{} {}", "Checking:".bold(), spec.module.cyan());
+            for cr in &result.constraint_results {
+                let tag = format!("[{}|{}]", cr.kind, cr.tier);
+                match cr.severity {
+                    checker::ConstraintSeverity::Error => {
+                        println!("  {} {} {}", "✗".red(), tag.dimmed(), cr.message);
+                        total_errors += 1;
+                    }
+                    checker::ConstraintSeverity::Warning => {
+                        println!("  {} {} {}", "⚠".yellow(), tag.dimmed(), cr.message);
+                        total_warnings += 1;
+                    }
                 }
             }
+            println!();
         }
-
-        if result.constraint_results.is_empty() {
-            println!("  {} All checks passed", "✓".green());
-        }
-
-        println!();
     }
 
     // ── Composition checks (cross-module) ──────────────────────────────────
@@ -373,32 +383,43 @@ fn cmd_check(
     // ── Subsystem checks ──────────────────────────────────────────────────
     let subsystem_specs = load_subsystem_specs(spec_path);
     if !subsystem_specs.is_empty() {
-        println!("{}", "Subsystem Checks".bold().cyan());
+        let mut subsystem_header_printed = false;
 
         for subsystem in &subsystem_specs {
-            println!("{} {}", "Checking subsystem:".bold(), subsystem.subsystem.cyan());
-
             let sub_result = checker.check_subsystem(subsystem, &specs);
 
-            for cr in &sub_result.constraint_results {
-                let tag = format!("[{}|{}]", cr.kind, cr.tier);
-                match cr.severity {
-                    checker::ConstraintSeverity::Error => {
-                        println!("  {} {} {}", "✗".red(), tag.dimmed(), cr.message);
-                        total_errors += 1;
+            if sub_result.constraint_results.is_empty() {
+                total_passed += 1;
+                if verbose {
+                    if !subsystem_header_printed {
+                        println!("{}", "Subsystem Checks".bold().cyan());
+                        subsystem_header_printed = true;
                     }
-                    checker::ConstraintSeverity::Warning => {
-                        println!("  {} {} {}", "⚠".yellow(), tag.dimmed(), cr.message);
-                        total_warnings += 1;
+                    println!("{} {}", "Checking subsystem:".bold(), subsystem.subsystem.cyan());
+                    println!("  {} All checks passed", "✓".green());
+                    println!();
+                }
+            } else {
+                if !subsystem_header_printed {
+                    println!("{}", "Subsystem Checks".bold().cyan());
+                    subsystem_header_printed = true;
+                }
+                println!("{} {}", "Checking subsystem:".bold(), subsystem.subsystem.cyan());
+                for cr in &sub_result.constraint_results {
+                    let tag = format!("[{}|{}]", cr.kind, cr.tier);
+                    match cr.severity {
+                        checker::ConstraintSeverity::Error => {
+                            println!("  {} {} {}", "✗".red(), tag.dimmed(), cr.message);
+                            total_errors += 1;
+                        }
+                        checker::ConstraintSeverity::Warning => {
+                            println!("  {} {} {}", "⚠".yellow(), tag.dimmed(), cr.message);
+                            total_warnings += 1;
+                        }
                     }
                 }
+                println!();
             }
-
-            if sub_result.constraint_results.is_empty() {
-                println!("  {} All checks passed", "✓".green());
-            }
-
-            println!();
         }
     }
 
@@ -531,20 +552,22 @@ fn cmd_check(
 
     if total_errors > 0 {
         println!(
-            "{} {} error(s), {} warning(s)",
+            "{} {} passed, {} error(s), {} warning(s)",
             "FAILED:".red().bold(),
+            total_passed,
             total_errors,
             total_warnings
         );
         std::process::exit(1);
     } else if total_warnings > 0 {
         println!(
-            "{} {} warning(s)",
+            "{} {} passed, {} warning(s)",
             "PASSED:".yellow().bold(),
+            total_passed,
             total_warnings
         );
     } else {
-        println!("{} All specs validated", "PASSED:".green().bold());
+        println!("{} All {} specs validated", "PASSED:".green().bold(), total_passed);
     }
 
     Ok(())
@@ -792,29 +815,30 @@ fn run_single_project_check(
 ) -> Result<()> {
     let mut total_errors = 0;
     let mut total_warnings = 0;
+    let mut total_passed = 0;
 
     for spec in specs {
-        println!("{} {}", "Checking:".bold(), spec.module.cyan());
         let result = checker.check(spec)?;
 
-        for cr in &result.constraint_results {
-            let tag = format!("[{}|{}]", cr.kind, cr.tier);
-            match cr.severity {
-                checker::ConstraintSeverity::Error => {
-                    println!("  {} {} {}", "✗".red(), tag.dimmed(), cr.message);
-                    total_errors += 1;
-                }
-                checker::ConstraintSeverity::Warning => {
-                    println!("  {} {} {}", "⚠".yellow(), tag.dimmed(), cr.message);
-                    total_warnings += 1;
+        if result.constraint_results.is_empty() {
+            total_passed += 1;
+        } else {
+            println!("{} {}", "Checking:".bold(), spec.module.cyan());
+            for cr in &result.constraint_results {
+                let tag = format!("[{}|{}]", cr.kind, cr.tier);
+                match cr.severity {
+                    checker::ConstraintSeverity::Error => {
+                        println!("  {} {} {}", "✗".red(), tag.dimmed(), cr.message);
+                        total_errors += 1;
+                    }
+                    checker::ConstraintSeverity::Warning => {
+                        println!("  {} {} {}", "⚠".yellow(), tag.dimmed(), cr.message);
+                        total_warnings += 1;
+                    }
                 }
             }
+            println!();
         }
-
-        if result.constraint_results.is_empty() {
-            println!("  {} All checks passed", "✓".green());
-        }
-        println!();
     }
 
     if specs.len() > 1 {
@@ -840,14 +864,15 @@ fn run_single_project_check(
     println!("{}", "=".repeat(40));
     if total_errors > 0 {
         println!(
-            "{} {} error(s), {} warning(s)",
+            "{} {} passed, {} error(s), {} warning(s)",
             "FAILED:".red().bold(),
+            total_passed,
             total_errors,
             total_warnings
         );
         std::process::exit(1);
     } else {
-        println!("{} All specs validated", "PASSED:".green().bold());
+        println!("{} All {} specs validated", "PASSED:".green().bold(), total_passed);
     }
     Ok(())
 }
