@@ -520,17 +520,22 @@ struct LlmResponse {
 /// For OpenAI-compatible providers (local LLMs), appends /no_think
 /// to disable thinking/reasoning mode (e.g., Qwen 3.5) which would
 /// otherwise consume all tokens on internal reasoning.
-fn build_prompt(code: &str, invariant: &str, provider: &LlmProvider) -> String {
+fn build_prompt(code: &str, invariant: &str, context: &str, provider: &LlmProvider) -> String {
     let no_think = match provider {
         LlmProvider::OpenAICompatible => " /no_think",
         LlmProvider::Anthropic => "",
+    };
+    let context_section = if context.is_empty() {
+        String::new()
+    } else {
+        format!("\n## Context:\n{context}\n")
     };
     format!(
         r#"You are verifying whether source code satisfies a specification invariant.
 
 ## Invariant to verify:
 {invariant}
-
+{context_section}
 ## Source code:
 ```
 {code}
@@ -543,6 +548,27 @@ Respond with ONLY a JSON object, no other text:
     )
 }
 
+/// Build a context string from module/entity descriptions for LLM prompts.
+fn build_description_context(spec: &ModuleSpec, invariant_text: &str) -> String {
+    let mut parts = Vec::new();
+
+    if let Some(desc) = &spec.description {
+        parts.push(format!("Module `{}`: {}", spec.module, desc));
+    }
+
+    // If the invariant is entity-specific (e.g. "func_name: ensures ..."),
+    // include that entity's description
+    for (name, expose) in &spec.exposes {
+        if let Some(desc) = &expose.description {
+            if invariant_text.starts_with(&format!("{}: ", name)) {
+                parts.push(format!("`{}`: {}", name, desc));
+            }
+        }
+    }
+
+    parts.join("\n")
+}
+
 /// Maximum number of retries for rate-limited requests
 const MAX_RETRIES: u32 = 5;
 /// Initial backoff delay in milliseconds
@@ -553,11 +579,12 @@ const INITIAL_BACKOFF_MS: u64 = 2000;
 pub async fn llm_verify(
     code: &str,
     invariant: &str,
+    context: &str,
     config: &LlmConfig,
 ) -> anyhow::Result<InvariantResult> {
     let api_key = config.api_key.as_deref().unwrap_or("");
     let client = reqwest::Client::new();
-    let prompt = build_prompt(code, invariant, &config.provider);
+    let prompt = build_prompt(code, invariant, context, &config.provider);
     let url = config.api_url();
     let max_tokens = match config.provider {
         LlmProvider::Anthropic => 256,
@@ -693,9 +720,9 @@ async fn parse_llm_response(
 }
 
 /// Estimate token count for a code+invariant pair (rough approximation)
-pub fn estimate_tokens(code: &str, invariant: &str) -> usize {
+pub fn estimate_tokens(code: &str, invariant: &str, context: &str) -> usize {
     // Rough: ~4 chars per token for English/code
-    let prompt = build_prompt(code, invariant, &LlmProvider::Anthropic);
+    let prompt = build_prompt(code, invariant, context, &LlmProvider::Anthropic);
     prompt.len() / 4 + 100 // +100 for output tokens
 }
 
@@ -724,6 +751,7 @@ pub async fn check_behavioral(
     let mut summary = BehavioralSummary::default();
 
     for inv in &invariants {
+        let context = build_description_context(spec, &inv.text);
         match inv.tier {
             InvariantTier::Static => {
                 if let Some(result) = check_static_invariant(inv, source_code) {
@@ -740,6 +768,7 @@ pub async fn check_behavioral(
                     handle_behavioral_invariant(
                         inv,
                         source_code,
+                        &context,
                         config,
                         cache_dir,
                         &mut summary,
@@ -751,6 +780,7 @@ pub async fn check_behavioral(
                 handle_behavioral_invariant(
                     inv,
                     source_code,
+                    &context,
                     config,
                     cache_dir,
                     &mut summary,
@@ -773,6 +803,7 @@ const DEFAULT_OLLAMA_NUM_CTX: u32 = 8192;
 async fn handle_behavioral_invariant(
     inv: &ClassifiedInvariant,
     source_code: &str,
+    context: &str,
     config: &LlmConfig,
     cache_dir: &Path,
     summary: &mut BehavioralSummary,
@@ -800,7 +831,7 @@ async fn handle_behavioral_invariant(
 
             // If provider requires an API key we don't have, just print estimate
             if config.provider == LlmProvider::Anthropic && config.api_key.is_none() {
-                let tokens = estimate_tokens(source_code, &inv.text);
+                let tokens = estimate_tokens(source_code, &inv.text, context);
                 eprintln!(
                     "  [dry-run] {} | ~{} tokens | would call LLM",
                     inv.text, tokens,
@@ -810,7 +841,7 @@ async fn handle_behavioral_invariant(
             }
 
             // Call the configured provider for a preview check
-            match llm_verify(source_code, &inv.text, config).await {
+            match llm_verify(source_code, &inv.text, context, config).await {
                 Ok(result) => {
                     let cached = CachedResult {
                         satisfies: result.satisfies,
@@ -881,7 +912,7 @@ async fn handle_behavioral_invariant(
                 return;
             }
 
-            match llm_verify(source_code, &inv.text, config).await {
+            match llm_verify(source_code, &inv.text, context, config).await {
                 Ok(result) => {
                     // Cache the result
                     let cached = CachedResult {
@@ -1037,7 +1068,7 @@ mod tests {
 
     #[test]
     fn estimate_tokens_reasonable() {
-        let tokens = estimate_tokens("fn foo() {}", "never panics");
+        let tokens = estimate_tokens("fn foo() {}", "never panics", "");
         assert!(tokens > 50 && tokens < 500);
     }
 

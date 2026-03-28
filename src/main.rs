@@ -105,7 +105,7 @@ enum Commands {
         path: PathBuf,
     },
 
-    /// Install Claude Code skills (fill-behavioral-specs, flow9)
+    /// Install Claude Code skills (fill-behavioral-specs by default; use --only for others)
     InitSkill {
         /// Install globally (~/.claude/commands/) instead of project-local (.claude/commands/)
         #[arg(long)]
@@ -941,21 +941,23 @@ fn cmd_toposort(spec_path: &PathBuf) -> Result<()> {
 }
 
 fn cmd_init_skill(global: bool, only: &[String]) -> Result<()> {
-    let all_skills: &[(&str, &str, &[&str])] = &[
+    let all_skills: &[(&str, &str, &[&str], bool)] = &[
         (
             "fill-behavioral-specs",
-            include_str!("skill/fill-behavioral-specs.md"),
+            include_str!("../skills/fill-behavioral-specs.md"),
             &[
                 "  /fill-behavioral-specs            Fill behavioral specs for the whole project",
                 "  /fill-behavioral-specs src/foo.rs  Fill specs for a single file",
             ],
+            true, // installed by default
         ),
         (
             "flow9",
-            include_str!("skill/flow9.md"),
+            include_str!("../skills/flow9.md"),
             &[
                 "  /flow9                             Flow9 language reference for the agent",
             ],
+            false, // only installed with --only flow9
         ),
     ];
 
@@ -970,8 +972,12 @@ fn cmd_init_skill(global: bool, only: &[String]) -> Result<()> {
     std::fs::create_dir_all(&target_dir)?;
 
     let mut installed = 0;
-    for (name, content, usage_lines) in all_skills {
-        if !only.is_empty() && !only.iter().any(|o| o == name) {
+    for (name, content, usage_lines, default) in all_skills {
+        if only.is_empty() {
+            if !default {
+                continue;
+            }
+        } else if !only.iter().any(|o| o == name) {
             continue;
         }
 
@@ -986,7 +992,7 @@ fn cmd_init_skill(global: bool, only: &[String]) -> Result<()> {
     }
 
     if installed == 0 {
-        let available: Vec<&str> = all_skills.iter().map(|(n, _, _)| *n).collect();
+        let available: Vec<&str> = all_skills.iter().map(|(n, _, _, _)| *n).collect();
         println!(
             "{} No matching skills. Available: {}",
             "⚠".yellow(),

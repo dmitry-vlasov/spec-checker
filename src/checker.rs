@@ -2871,6 +2871,7 @@ fn main() {
 
         let subsystem = SubsystemSpec {
             subsystem: "PaymentService".to_string(),
+            description: None,
             modules: vec!["src/bridge.rs".to_string(), "src/registry.rs".to_string()],
             exposes: sub_exposes,
             invariants: vec![],
@@ -2896,6 +2897,7 @@ fn main() {
     fn test_subsystem_missing_module() {
         let subsystem = SubsystemSpec {
             subsystem: "Service".to_string(),
+            description: None,
             modules: vec!["src/missing.rs".to_string()],
             exposes: HashMap::new(),
             invariants: vec![],
@@ -2933,6 +2935,7 @@ fn main() {
 
         let subsystem = SubsystemSpec {
             subsystem: "Service".to_string(),
+            description: None,
             modules: vec!["src/bridge.rs".to_string()],
             exposes: sub_exposes,
             invariants: vec![],
@@ -2970,6 +2973,7 @@ fn main() {
 
         let subsystem = SubsystemSpec {
             subsystem: "Service".to_string(),
+            description: None,
             modules: vec!["src/bridge.rs".to_string()],
             exposes: sub_exposes,
             invariants: vec![],
@@ -3002,6 +3006,7 @@ fn main() {
 
         let subsystem = SubsystemSpec {
             subsystem: "Service".to_string(),
+            description: None,
             modules: vec!["src/bridge.rs".to_string()],
             exposes: HashMap::new(),
             invariants: vec![],
@@ -3034,6 +3039,7 @@ fn main() {
 
         let subsystem = SubsystemSpec {
             subsystem: "Service".to_string(),
+            description: None,
             modules: vec!["src/bridge.rs".to_string()],
             exposes: HashMap::new(),
             invariants: vec![],

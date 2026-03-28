@@ -44,12 +44,14 @@ Unified YAML format covering structural, type, protocol, and behavioral specific
 
 ```yaml
 module: Bridge
+description: "Cross-chain token bridge handling deposits and signature-verified withdrawals"
 language: solidity
 source_path: contracts/Bridge.sol
 
 exposes:
   BridgeState:
     kind: type
+    description: "Tracks deposited balances and admin configuration"
     type_constraints:
       - "is_product(Self)"
       - "has_field(Self, deposited)"
@@ -57,6 +59,7 @@ exposes:
 
   Bridge.deposit:
     kind: function
+    description: "Accepts a token deposit, updating the bridge's balance tracking"
     type_constraints:
       - "equals(param(token), str)"
       - "fallible(return)"
@@ -65,6 +68,7 @@ exposes:
 
   Bridge.withdraw:
     kind: function
+    description: "Processes a withdrawal after verifying the cryptographic signature"
     type_constraints:
       - "fallible(return)"
     requires: [valid_signature, not already_executed]
@@ -121,6 +125,10 @@ Each entry in `exposes` has a `kind` field:
 - `kind: function` — functions and methods
 - `kind: type` — structs, enums, traits, interfaces
 - `kind: variable` — global constants and static variables
+
+### Descriptions
+
+Any entity (module, subsystem, function, type) can have an optional `description` field — a concise natural-language summary of its purpose. Descriptions are not used in formal verification (Tiers 1–2) but are included as context in LLM behavioral checks (Tier 3), improving the quality of invariant verification.
 
 ## Type Formula DSL
 
@@ -496,6 +504,15 @@ spec-checker init --language rust ./src/ -o ./specs/
 
 # Diff: show spec vs implementation discrepancies
 spec-checker diff ./specs/main.spec.yaml ./src/main.rs
+
+# Install Claude Code skills (fill-behavioral-specs by default)
+spec-checker init-skill
+
+# Install globally
+spec-checker init-skill --global
+
+# Install a specific skill (e.g. flow9 language support)
+spec-checker init-skill --only flow9
 ```
 
 ## Self-Verification

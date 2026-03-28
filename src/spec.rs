@@ -119,6 +119,10 @@ pub struct ModuleSpec {
     /// Module name
     pub module: String,
 
+    /// Natural-language description of the module's purpose (for LLM reasoning)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
     /// Programming language
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
@@ -246,6 +250,10 @@ pub struct SubsystemSpec {
     /// Subsystem name
     pub subsystem: String,
 
+    /// Natural-language description of the subsystem's purpose (for LLM reasoning)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
     /// Module source paths that compose this subsystem
     #[serde(default)]
     pub modules: Vec<String>,
@@ -282,6 +290,10 @@ pub struct SubsystemSpec {
 /// A subsystem-level exposed interface entry.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SubsystemExposeSpec {
+    /// Natural-language description of this exposed interface (for LLM reasoning)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
     /// Which module.function this delegates to
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delegates_to: Option<String>,
@@ -301,6 +313,10 @@ pub struct ExposeSpec {
     /// Entity kind: "function", "type"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
+
+    /// Natural-language description of this entity's purpose (for LLM reasoning)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 
     /// Function signature (legacy, for backward compatibility)
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -679,6 +695,7 @@ impl ModuleSpec {
 
         Self {
             module: extracted.name.clone(),
+            description: None,
             language: Some(extracted.language.clone()),
             source_path: extracted.source_path.clone(),
             exposes,
