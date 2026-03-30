@@ -1064,7 +1064,7 @@ fn cmd_init(source: &PathBuf, language: Option<&str>, output: Option<&PathBuf>, 
         let source_code = std::fs::read_to_string(source)?;
         println!("  {} Enriching with AI...", "⚙".cyan());
         let rt = tokio::runtime::Runtime::new()?;
-        match rt.block_on(ai_init::ai_enrich_spec(&spec, &source_code, config)) {
+        match rt.block_on(ai_init::ai_enrich_spec(&spec, &source_code, &extracted, config)) {
             Ok(enrichment) => {
                 ai_init::apply_enrichment(&mut spec, enrichment);
                 println!("  {} AI enrichment applied", "✓".green());
@@ -1136,15 +1136,14 @@ fn cmd_init_dir(
     let out_dir = output.cloned().unwrap_or_else(|| PathBuf::from("./specs"));
     std::fs::create_dir_all(&out_dir)?;
 
-    let mut count = 0;
+    // Collect all source files first (for progress reporting)
+    let mut source_files: Vec<PathBuf> = Vec::new();
     let mut skipped = 0;
 
     for ext in &extensions {
         let pattern = format!("{}/**/*.{}", source_dir.display(), ext);
         for entry in glob::glob(&pattern)? {
             let entry = entry?;
-
-            // Check against exclude patterns
             if !exclude_matchers.is_empty() {
                 let canonical_entry = entry.canonicalize().unwrap_or_else(|_| entry.clone());
                 if exclude_matchers.iter().any(|p| p.matches_path(&canonical_entry)) {
@@ -1152,76 +1151,84 @@ fn cmd_init_dir(
                     continue;
                 }
             }
+            source_files.push(entry);
+        }
+    }
 
-            let lang = detect_language(&entry)
-                .or_else(|| language.map(String::from))
-                .unwrap_or_default();
+    // Create tokio runtime once (only needed for AI enrichment)
+    let rt = llm_config.map(|_| tokio::runtime::Runtime::new()).transpose()?;
 
-            if lang.is_empty() {
+    let mut count = 0;
+    let total = source_files.len();
+
+    for (idx, entry) in source_files.iter().enumerate() {
+        let lang = detect_language(entry)
+            .or_else(|| language.map(String::from))
+            .unwrap_or_default();
+
+        if lang.is_empty() {
+            continue;
+        }
+
+        let extractor = match extractors::get_extractor(&lang) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let extracted = match extractor.extract(entry) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!(
+                    "  {} {} — {}",
+                    "⚠".yellow(),
+                    entry.display(),
+                    e
+                );
                 continue;
             }
+        };
 
-            let extractor = match extractors::get_extractor(&lang) {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
+        // Skip files with nothing to spec
+        if extracted.public_functions.is_empty() && extracted.type_definitions.is_empty() {
+            continue;
+        }
 
-            let extracted = match extractor.extract(&entry) {
-                Ok(e) => e,
-                Err(e) => {
-                    eprintln!(
-                        "  {} {} — {}",
-                        "⚠".yellow(),
-                        entry.display(),
-                        e
-                    );
-                    continue;
-                }
-            };
+        let mut spec = ModuleSpec::from_extracted(&extracted);
+        spec.source_hash = Some(spec::compute_source_hash(entry)?);
 
-            // Skip files with nothing to spec
-            if extracted.public_functions.is_empty() && extracted.type_definitions.is_empty() {
-                continue;
-            }
-
-            let mut spec = ModuleSpec::from_extracted(&extracted);
-            spec.source_hash = Some(spec::compute_source_hash(&entry)?);
-
-            // AI enrichment if requested
-            if let Some(config) = llm_config {
-                let source_code = std::fs::read_to_string(&entry).unwrap_or_default();
-                if !source_code.is_empty() {
-                    eprint!("  {} Enriching {}...", "⚙".cyan(), entry.display());
-                    let rt = tokio::runtime::Runtime::new()?;
-                    match rt.block_on(ai_init::ai_enrich_spec(&spec, &source_code, config)) {
-                        Ok(enrichment) => {
-                            ai_init::apply_enrichment(&mut spec, enrichment);
-                            eprintln!(" {}", "done".green());
-                        }
-                        Err(e) => {
-                            eprintln!(" {} {}", "failed:".yellow(), e);
-                        }
+        // AI enrichment if requested
+        if let (Some(config), Some(rt)) = (llm_config, rt.as_ref()) {
+            let source_code = std::fs::read_to_string(entry).unwrap_or_default();
+            if !source_code.is_empty() {
+                eprint!("  [{}/{}] {} Enriching {}...", idx + 1, total, "⚙".cyan(), entry.display());
+                match rt.block_on(ai_init::ai_enrich_spec(&spec, &source_code, &extracted, config)) {
+                    Ok(enrichment) => {
+                        ai_init::apply_enrichment(&mut spec, enrichment);
+                        eprintln!(" {}", "done".green());
+                    }
+                    Err(e) => {
+                        eprintln!(" {} {}", "failed:".yellow(), e);
                     }
                 }
             }
-
-            let yaml = serde_yaml::to_string(&spec)?;
-
-            // Build output path: mirror directory structure
-            let relative = entry
-                .strip_prefix(source_dir)
-                .unwrap_or(&entry);
-            let spec_name = relative.with_extension("spec.yaml");
-            let spec_path = out_dir.join(&spec_name);
-
-            if let Some(parent) = spec_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-
-            std::fs::write(&spec_path, &yaml)?;
-            println!("  {} {}", "✓".green(), spec_path.display());
-            count += 1;
         }
+
+        let yaml = serde_yaml::to_string(&spec)?;
+
+        // Build output path: mirror directory structure
+        let relative = entry
+            .strip_prefix(source_dir)
+            .unwrap_or(entry);
+        let spec_name = relative.with_extension("spec.yaml");
+        let spec_path = out_dir.join(&spec_name);
+
+        if let Some(parent) = spec_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        std::fs::write(&spec_path, &yaml)?;
+        println!("  {} {}", "✓".green(), spec_path.display());
+        count += 1;
     }
 
     if skipped > 0 {

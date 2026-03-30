@@ -2,6 +2,7 @@
 // with descriptions, API curation, forbidden deps, invariants, and layer.
 
 use crate::behavioral::{LlmConfig, LlmProvider};
+use crate::extractors::ExtractedModule;
 use crate::spec::ModuleSpec;
 
 /// AI-generated enrichments for a module spec.
@@ -37,12 +38,91 @@ pub struct ForbiddenDep {
 const MAX_RETRIES: u32 = 5;
 const INITIAL_BACKOFF_MS: u64 = 2000;
 
+/// Build a compact summary of a module from extracted metadata.
+/// Used for local LLMs with limited context windows instead of full source.
+fn summarize_extracted(extracted: &ExtractedModule) -> String {
+    let mut lines = Vec::new();
+
+    // Imports
+    if !extracted.imports.is_empty() {
+        lines.push("// Imports:".to_string());
+        for imp in &extracted.imports {
+            lines.push(format!("//   {}", imp));
+        }
+        lines.push(String::new());
+    }
+
+    // Type definitions with fields/variants
+    for (name, info) in &extracted.type_definitions {
+        let kind = match info.kind {
+            crate::types::TypeKind::Struct => "struct",
+            crate::types::TypeKind::Enum => "enum",
+            crate::types::TypeKind::Trait => "trait",
+            crate::types::TypeKind::TypeAlias => "type",
+        };
+        let mut def = format!("pub {} {}", kind, name);
+        if !info.generics.is_empty() {
+            let gs: Vec<&str> = info.generics.iter().map(|g| g.name.as_str()).collect();
+            def.push_str(&format!("<{}>", gs.join(", ")));
+        }
+        if !info.fields.is_empty() {
+            let fields: Vec<String> = info.fields.iter()
+                .map(|f| format!("  {}: {}", f.name, f.type_repr))
+                .collect();
+            def.push_str(&format!(" {{\n{}\n}}", fields.join(",\n")));
+        } else if !info.variants.is_empty() {
+            let variants: Vec<String> = info.variants.iter()
+                .map(|v| {
+                    if v.fields.is_empty() {
+                        format!("  {}", v.name)
+                    } else {
+                        let vf: Vec<String> = v.fields.iter()
+                            .map(|f| format!("{}: {}", f.name, f.type_repr))
+                            .collect();
+                        format!("  {}({})", v.name, vf.join(", "))
+                    }
+                })
+                .collect();
+            def.push_str(&format!(" {{\n{}\n}}", variants.join(",\n")));
+        }
+        lines.push(def);
+        lines.push(String::new());
+    }
+
+    // Function signatures
+    for (name, sig) in &extracted.function_signatures {
+        let visibility = if extracted.public_functions.contains(name) { "pub " } else { "" };
+        lines.push(format!("{}{}", visibility, sig));
+    }
+
+    // State variables
+    if !extracted.state_variables.is_empty() {
+        lines.push(String::new());
+        lines.push("// State variables:".to_string());
+        for var in &extracted.state_variables {
+            lines.push(format!("//   {}", var));
+        }
+    }
+
+    // Events
+    if !extracted.events.is_empty() {
+        lines.push(String::new());
+        lines.push("// Events:".to_string());
+        for ev in &extracted.events {
+            lines.push(format!("//   {}", ev));
+        }
+    }
+
+    lines.join("\n")
+}
+
 fn build_enrichment_prompt(
     module_name: &str,
-    source_code: &str,
+    code_content: &str,
     entity_names: &[String],
     language: &str,
     provider: &LlmProvider,
+    is_summary: bool,
 ) -> String {
     let no_think = match provider {
         LlmProvider::OpenAICompatible => " /no_think",
@@ -51,15 +131,21 @@ fn build_enrichment_prompt(
 
     let entities_list = entity_names.join(", ");
 
+    let code_label = if is_summary {
+        "## Module signatures and structure (summary):"
+    } else {
+        "## Source code:"
+    };
+
     format!(
         r#"You are analyzing a {language} source module to generate a specification.
 
 ## Module: {module_name}
 ## Public entities found: {entities_list}
 
-## Source code:
+{code_label}
 ```
-{source_code}
+{code_content}
 ```
 
 ## Instructions:
@@ -80,19 +166,29 @@ Respond with ONLY a JSON object, no other text.{no_think}"#
 }
 
 /// Call the LLM to enrich a lean spec skeleton with AI-generated content.
+/// For local LLMs (OpenAI-compatible), sends a compact signature summary
+/// instead of full source code to fit within context limits.
 pub async fn ai_enrich_spec(
     spec: &ModuleSpec,
     source_code: &str,
+    extracted: &ExtractedModule,
     config: &LlmConfig,
 ) -> anyhow::Result<SpecEnrichment> {
     let language = spec.language.as_deref().unwrap_or("unknown");
     let entity_names: Vec<String> = spec.exposes.keys().cloned().collect();
+
+    let (code_content, is_summary) = match config.provider {
+        LlmProvider::Anthropic => (source_code.to_string(), false),
+        LlmProvider::OpenAICompatible => (summarize_extracted(extracted), true),
+    };
+
     let prompt = build_enrichment_prompt(
         &spec.module,
-        source_code,
+        &code_content,
         &entity_names,
         language,
         &config.provider,
+        is_summary,
     );
 
     let api_key = config.api_key.as_deref().unwrap_or("");
