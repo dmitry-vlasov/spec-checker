@@ -635,59 +635,30 @@ impl ModuleSpec {
     pub fn from_extracted(extracted: &ExtractedModule) -> Self {
         let mut exposes = HashMap::new();
 
-        // Add type definitions
+        // Add type definitions — kind only, no structural mirroring
         for (name, type_info) in &extracted.type_definitions {
             // Only include types that are publicly referenced
             if !extracted.public_functions.contains(name) {
                 continue;
             }
-            let mut constraints = Vec::new();
-            match type_info.kind {
-                crate::types::TypeKind::Struct => constraints.push("is_product(Self)".to_string()),
-                crate::types::TypeKind::Enum => constraints.push("is_sum(Self)".to_string()),
-                _ => {}
-            }
-            for field in &type_info.fields {
-                constraints.push(format!("has_field(Self, {})", field.name));
-            }
-            for variant in &type_info.variants {
-                constraints.push(format!("has_variant(Self, {})", variant.name));
-            }
+            let kind_str = match type_info.kind {
+                crate::types::TypeKind::Struct => "type",
+                crate::types::TypeKind::Enum => "type",
+                _ => "type",
+            };
             exposes.insert(name.clone(), ExposeSpec {
-                kind: Some("type".to_string()),
-                type_constraints: constraints,
+                kind: Some(kind_str.to_string()),
                 ..Default::default()
             });
         }
 
-        // Add public functions
+        // Add public functions — kind only, no param/return mirroring
         for func in &extracted.public_functions {
-            // Skip if already added as a type
             if exposes.contains_key(func) {
                 continue;
             }
-
-            let mut constraints = Vec::new();
-
-            // Convert function info to type constraints
-            if let Some(fi) = extracted.function_info.get(func) {
-                for param in &fi.params {
-                    if let Some(name) = &param.name {
-                        let type_str = param.type_repr.to_string();
-                        constraints.push(format!("equals(param({}), {})", name, type_str));
-                    }
-                }
-                if let Some(ret) = &fi.return_type {
-                    let ret_str = ret.to_string();
-                    if ret_str != "()" {
-                        constraints.push(format!("equals(return, {})", ret_str));
-                    }
-                }
-            }
-
             exposes.insert(func.clone(), ExposeSpec {
                 kind: Some("function".to_string()),
-                type_constraints: constraints,
                 ..Default::default()
             });
         }
@@ -715,7 +686,7 @@ impl ModuleSpec {
             exposes,
             depends_on: Vec::new(),
             forbidden_deps: Vec::new(),
-            external_deps: extracted.imports.clone(),
+            external_deps: Vec::new(),         // omit: derivable from source
             forbidden_external: Vec::new(),
             layer: None,
             context: None,

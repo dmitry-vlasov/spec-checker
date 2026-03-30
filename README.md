@@ -530,11 +530,15 @@ spec-checker check ./specs -s . --llm-check full \
 # With explicit Anthropic API key
 ANTHROPIC_API_KEY=sk-ant-... spec-checker check ./specs -s . --llm-check full
 
-# Generate spec skeleton from existing code (with protocol detection)
+# Generate lean spec skeleton from existing code
 spec-checker init --language rust ./src/main.rs
 
 # Generate specs for entire directory
 spec-checker init --language rust ./src/ -o ./specs/
+
+# AI-enriched init: adds descriptions, curates API, suggests invariants and forbidden deps
+spec-checker init --ai ./src/
+spec-checker init --ai --llm-provider anthropic ./src/main.rs
 
 # Exclude directories from init (persisted to .spec-checker.yaml)
 spec-checker init --language flow9 . -o ./specs --exclude 'tools/**' --exclude 'tests/**'
@@ -552,6 +556,31 @@ spec-checker init-skill --global
 spec-checker init-skill --only flow9
 spec-checker init-skill --only spec-checker
 ```
+
+## Spec Initialization
+
+`spec-checker init` generates lean spec skeletons focused on intent, not code mirroring:
+
+- **Entities** are listed with just their `kind` (function/type/variable) — no type_constraints duplicating struct fields or function signatures
+- **Dependencies** (`depends_on`, `external_deps`) are omitted — they're derivable from source code
+- **Forbidden deps**, invariants, descriptions, and layer are left empty for you to fill
+
+### AI-Enriched Init (`--ai`)
+
+With `--ai`, the spec skeleton is sent to an LLM along with the source code for enrichment:
+
+```bash
+spec-checker init --ai ./src/
+```
+
+The AI generates:
+- **Module description** — one sentence about what the module is *for*
+- **API curation** — filters `exposes` down to the intended public contract, dropping internal helpers that happen to be public, and adds one-line descriptions
+- **Forbidden deps** — suggests dependencies that would violate the module's architectural role
+- **Invariants** — non-obvious properties (error handling, ordering, safety) that aren't self-evident from the code
+- **Layer** — classifies the module (infrastructure/domain/application/interface)
+
+Uses the LLM provider from `.spec-checker.yaml` (or override with `--llm-provider`). Without `--ai`, you get a minimal skeleton suitable for manual enrichment or the `/fill-behavioral-specs` skill.
 
 ## Claude Code Skills
 
@@ -576,7 +605,9 @@ spec-checker init-skill --global
 
 ### fill-behavioral-specs
 
-The `fill-behavioral-specs` skill reads source code and fills in the behavioral parts of spec files that `spec-checker init` leaves empty: `description`, `requires`, `ensures`, `modifies`, and `invariants`. It processes files in dependency order (using `spec-checker toposort`) so that each module's specs can reference the contracts of its dependencies. After writing specs, it updates `source_hash` to prevent staleness warnings.
+The `fill-behavioral-specs` skill reads source code and fills in the behavioral parts of spec files: `description`, `requires`, `ensures`, `modifies`, and `invariants`. It processes files in dependency order (using `spec-checker toposort`) so that each module's specs can reference the contracts of its dependencies. After writing specs, it updates `source_hash` to prevent staleness warnings.
+
+**Note**: With `spec-checker init --ai`, descriptions, invariants, and forbidden deps are generated automatically during init. The `fill-behavioral-specs` skill is useful for adding more detailed per-function requires/ensures contracts after the initial AI-enriched skeleton is created.
 
 ```bash
 # Fill specs for the whole project
@@ -620,7 +651,7 @@ The skill follows a layered resolution principle, stopping as soon as it has eno
 
 ## Self-Verification
 
-The spec-checker verifies its own structure (12 modules, 2 subsystems, ~120 type constraints, ~30 invariants):
+The spec-checker verifies its own structure:
 
 ```bash
 $ spec-checker check .

@@ -4,6 +4,7 @@ use colored::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+mod ai_init;
 mod behavioral;
 mod checker;
 mod dependency;
@@ -104,6 +105,14 @@ enum Commands {
         /// Glob patterns to exclude (can be repeated, e.g. --exclude 'tools/**' --exclude 'tests/**')
         #[arg(short, long)]
         exclude: Vec<String>,
+
+        /// Use AI to enrich specs with descriptions, invariants, and API curation
+        #[arg(long)]
+        ai: bool,
+
+        /// LLM provider from config (for --ai)
+        #[arg(long)]
+        llm_provider: Option<String>,
     },
 
     /// Show diff between spec and implementation
@@ -178,7 +187,16 @@ fn main() -> Result<()> {
             language,
             output,
             exclude,
-        } => cmd_init(&source, language.as_deref(), output.as_ref(), &exclude),
+            ai,
+            llm_provider,
+        } => {
+            let llm_config = if ai {
+                Some(load_llm_config(None, Some("full"), None, None, None, llm_provider.as_deref()))
+            } else {
+                None
+            };
+            cmd_init(&source, language.as_deref(), output.as_ref(), &exclude, llm_config.as_ref())
+        }
         Commands::Diff { spec, source } => cmd_diff(&spec, &source),
         Commands::Toposort { path, all } => cmd_toposort(&path, all),
         Commands::Deps { path } => cmd_deps(&path),
@@ -1023,9 +1041,9 @@ fn print_dep_tree(graph: &dependency::DependencyGraph, proj: &dependency::Resolv
     }
 }
 
-fn cmd_init(source: &PathBuf, language: Option<&str>, output: Option<&PathBuf>, exclude: &[String]) -> Result<()> {
+fn cmd_init(source: &PathBuf, language: Option<&str>, output: Option<&PathBuf>, exclude: &[String], llm_config: Option<&behavioral::LlmConfig>) -> Result<()> {
     if source.is_dir() {
-        return cmd_init_dir(source, language, output, exclude);
+        return cmd_init_dir(source, language, output, exclude, llm_config);
     }
 
     let lang = language
@@ -1040,6 +1058,23 @@ fn cmd_init(source: &PathBuf, language: Option<&str>, output: Option<&PathBuf>, 
 
     let mut spec = ModuleSpec::from_extracted(&extracted);
     spec.source_hash = Some(spec::compute_source_hash(source)?);
+
+    // AI enrichment if requested
+    if let Some(config) = llm_config {
+        let source_code = std::fs::read_to_string(source)?;
+        println!("  {} Enriching with AI...", "⚙".cyan());
+        let rt = tokio::runtime::Runtime::new()?;
+        match rt.block_on(ai_init::ai_enrich_spec(&spec, &source_code, config)) {
+            Ok(enrichment) => {
+                ai_init::apply_enrichment(&mut spec, enrichment);
+                println!("  {} AI enrichment applied", "✓".green());
+            }
+            Err(e) => {
+                eprintln!("  {} AI enrichment failed: {} — using lean skeleton", "⚠".yellow(), e);
+            }
+        }
+    }
+
     let yaml = serde_yaml::to_string(&spec)?;
 
     if let Some(out_path) = output {
@@ -1058,6 +1093,7 @@ fn cmd_init_dir(
     language: Option<&str>,
     output: Option<&PathBuf>,
     exclude: &[String],
+    llm_config: Option<&behavioral::LlmConfig>,
 ) -> Result<()> {
     // Determine file extension to scan for
     let extensions: Vec<&str> = match language {
@@ -1150,6 +1186,25 @@ fn cmd_init_dir(
 
             let mut spec = ModuleSpec::from_extracted(&extracted);
             spec.source_hash = Some(spec::compute_source_hash(&entry)?);
+
+            // AI enrichment if requested
+            if let Some(config) = llm_config {
+                let source_code = std::fs::read_to_string(&entry).unwrap_or_default();
+                if !source_code.is_empty() {
+                    eprint!("  {} Enriching {}...", "⚙".cyan(), entry.display());
+                    let rt = tokio::runtime::Runtime::new()?;
+                    match rt.block_on(ai_init::ai_enrich_spec(&spec, &source_code, config)) {
+                        Ok(enrichment) => {
+                            ai_init::apply_enrichment(&mut spec, enrichment);
+                            eprintln!(" {}", "done".green());
+                        }
+                        Err(e) => {
+                            eprintln!(" {} {}", "failed:".yellow(), e);
+                        }
+                    }
+                }
+            }
+
             let yaml = serde_yaml::to_string(&spec)?;
 
             // Build output path: mirror directory structure
