@@ -546,7 +546,7 @@ spec-checker init --language flow9 . -o ./specs --exclude 'tools/**' --exclude '
 # Diff: show spec vs implementation discrepancies
 spec-checker diff ./specs/main.spec.yaml ./src/main.rs
 
-# Install Claude Code skills (fill-behavioral-specs + spec-checker by default)
+# Install Claude Code skills (spec-refine + spec-checker by default)
 spec-checker init-skill
 
 # Install globally
@@ -580,7 +580,7 @@ The AI generates:
 - **Invariants** — non-obvious properties (error handling, ordering, safety) that aren't self-evident from the code
 - **Layer** — classifies the module (infrastructure/domain/application/interface)
 
-Uses the LLM provider from `.spec-checker.yaml` (or override with `--llm-provider`). Without `--ai`, you get a minimal skeleton suitable for manual enrichment or the `/fill-behavioral-specs` skill.
+Uses the LLM provider from `.spec-checker.yaml` (or override with `--llm-provider`). Without `--ai`, you get a minimal skeleton suitable for manual enrichment or `/spec-refine`.
 
 ## Claude Code Skills
 
@@ -589,11 +589,11 @@ Spec-checker ships with Claude Code skills that can be installed into any projec
 | Skill | Installed by default | Usage | Purpose |
 |-------|---------------------|-------|---------|
 | `spec-checker` | Yes | `/spec-checker <mode>` | AI guidance map: use specs for reasoning, planning, refactoring, and Q&A |
-| `fill-behavioral-specs` | Yes | `/fill-behavioral-specs [file]` | Fill in behavioral specs (requires/ensures/invariants) by reading source code |
+| `spec-refine` | Yes | `/spec-refine [file]` | Refine specs with per-function behavioral contracts (requires/ensures/modifies) |
 | `flow9` | No (`--only flow9`) | `/flow9` | Flow9 language reference for the AI agent |
 
 ```bash
-# Install default skills (spec-checker + fill-behavioral-specs)
+# Install default skills (spec-checker + spec-refine)
 spec-checker init-skill
 
 # Install all skills including language-specific ones
@@ -603,18 +603,18 @@ spec-checker init-skill --only all
 spec-checker init-skill --global
 ```
 
-### fill-behavioral-specs
+### spec-refine
 
-The `fill-behavioral-specs` skill reads source code and fills in the behavioral parts of spec files: `description`, `requires`, `ensures`, `modifies`, and `invariants`. It processes files in dependency order (using `spec-checker toposort`) so that each module's specs can reference the contracts of its dependencies. After writing specs, it updates `source_hash` to prevent staleness warnings.
+The `spec-refine` skill deepens existing specs with per-function behavioral contracts (`requires`, `ensures`, `modifies`). It processes files in dependency order (using `spec-checker toposort`) so that each module's contracts can reference its dependencies. After writing specs, it updates `source_hash` to prevent staleness warnings.
 
-**Note**: With `spec-checker init --ai`, descriptions, invariants, and forbidden deps are generated automatically during init. The `fill-behavioral-specs` skill is useful for adding more detailed per-function requires/ensures contracts after the initial AI-enriched skeleton is created.
+This is the second step after `spec-checker init --ai`: init creates the structural skeleton (descriptions, API, layer, forbidden_deps), then `/spec-refine` adds detailed behavioral contracts using Claude Code's intelligence.
 
 ```bash
 # Fill specs for the whole project
-/fill-behavioral-specs
+/spec-refine
 
 # Fill specs for a single file
-/fill-behavioral-specs src/checker.rs
+/spec-refine src/checker.rs
 ```
 
 ### spec-checker (AI Guidance Skill)

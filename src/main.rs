@@ -148,7 +148,7 @@ enum Commands {
         #[arg(long)]
         global: bool,
 
-        /// Skill name to install (e.g. fill-behavioral-specs, flow9, or "all")
+        /// Skill name to install (e.g. spec-refine, flow9, or "all")
         skill: Option<String>,
     },
 }
@@ -1550,11 +1550,11 @@ fn cmd_toposort(spec_path: &PathBuf, all: bool) -> Result<()> {
 fn cmd_init_skill(global: bool, skill: Option<&str>) -> Result<()> {
     let all_skills: &[(&str, &str, &[&str], bool)] = &[
         (
-            "fill-behavioral-specs",
-            include_str!("../skills/fill-behavioral-specs.md"),
+            "spec-refine",
+            include_str!("../skills/spec-refine.md"),
             &[
-                "  /fill-behavioral-specs            Fill behavioral specs for the whole project",
-                "  /fill-behavioral-specs src/foo.rs  Fill specs for a single file",
+                "  /spec-refine                      Refine specs with behavioral contracts",
+                "  /spec-refine src/foo.rs            Refine specs for a single file",
             ],
             true, // installed by default
         ),
