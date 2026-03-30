@@ -38,21 +38,15 @@ pub struct ForbiddenDep {
 const MAX_RETRIES: u32 = 5;
 const INITIAL_BACKOFF_MS: u64 = 2000;
 
-/// Build a compact summary of a module from extracted metadata.
-/// Used for local LLMs with limited context windows instead of full source.
-fn summarize_extracted(extracted: &ExtractedModule) -> String {
-    let mut lines = Vec::new();
+/// Build a compact summary of a module from extracted metadata,
+/// fitting within a character budget. Prioritizes: type definitions,
+/// public function signatures, then private signatures. Drops whole
+/// entities rather than cutting mid-definition.
+fn summarize_extracted(extracted: &ExtractedModule, max_chars: usize) -> String {
+    // Build blocks in priority order. Each block is a self-contained chunk.
+    let mut blocks: Vec<(u8, String)> = Vec::new(); // (priority, content) — lower = more important
 
-    // Imports
-    if !extracted.imports.is_empty() {
-        lines.push("// Imports:".to_string());
-        for imp in &extracted.imports {
-            lines.push(format!("//   {}", imp));
-        }
-        lines.push(String::new());
-    }
-
-    // Type definitions with fields/variants
+    // Priority 0: type definitions (compact, give structural understanding)
     for (name, info) in &extracted.type_definitions {
         let kind = match info.kind {
             crate::types::TypeKind::Struct => "struct",
@@ -85,35 +79,68 @@ fn summarize_extracted(extracted: &ExtractedModule) -> String {
                 .collect();
             def.push_str(&format!(" {{\n{}\n}}", variants.join(",\n")));
         }
-        lines.push(def);
-        lines.push(String::new());
+        blocks.push((0, def));
     }
 
-    // Function signatures
+    // Priority 1: public function signatures
     for (name, sig) in &extracted.function_signatures {
-        let visibility = if extracted.public_functions.contains(name) { "pub " } else { "" };
-        lines.push(format!("{}{}", visibility, sig));
+        if extracted.public_functions.contains(name) {
+            blocks.push((1, format!("pub {}", sig)));
+        }
     }
 
-    // State variables
+    // Priority 2: private function signatures
+    for (name, sig) in &extracted.function_signatures {
+        if !extracted.public_functions.contains(name) {
+            blocks.push((2, sig.clone()));
+        }
+    }
+
+    // Priority 3: imports
+    if !extracted.imports.is_empty() {
+        let imports: Vec<String> = extracted.imports.iter()
+            .map(|imp| format!("//   {}", imp))
+            .collect();
+        blocks.push((3, format!("// Imports:\n{}", imports.join("\n"))));
+    }
+
+    // Priority 4: state variables & events (small, low priority)
     if !extracted.state_variables.is_empty() {
-        lines.push(String::new());
-        lines.push("// State variables:".to_string());
-        for var in &extracted.state_variables {
-            lines.push(format!("//   {}", var));
-        }
+        let vars: Vec<String> = extracted.state_variables.iter()
+            .map(|v| format!("//   {}", v))
+            .collect();
+        blocks.push((4, format!("// State variables:\n{}", vars.join("\n"))));
     }
-
-    // Events
     if !extracted.events.is_empty() {
-        lines.push(String::new());
-        lines.push("// Events:".to_string());
-        for ev in &extracted.events {
-            lines.push(format!("//   {}", ev));
+        let evts: Vec<String> = extracted.events.iter()
+            .map(|e| format!("//   {}", e))
+            .collect();
+        blocks.push((4, format!("// Events:\n{}", evts.join("\n"))));
+    }
+
+    // Sort by priority (stable — preserves insertion order within same priority)
+    blocks.sort_by_key(|(prio, _)| *prio);
+
+    // Greedily add blocks until budget is exhausted
+    let mut result = Vec::new();
+    let mut remaining = max_chars;
+    let mut dropped = 0usize;
+
+    for (_prio, block) in &blocks {
+        let cost = block.len() + 1; // +1 for newline separator
+        if cost <= remaining {
+            result.push(block.as_str());
+            remaining -= cost;
+        } else {
+            dropped += 1;
         }
     }
 
-    lines.join("\n")
+    if dropped > 0 {
+        result.push("// ... (some definitions omitted to fit context window)");
+    }
+
+    result.join("\n")
 }
 
 fn build_enrichment_prompt(
@@ -180,17 +207,10 @@ pub async fn ai_enrich_spec(
     let (code_content, is_summary) = match config.provider {
         LlmProvider::Anthropic => (source_code.to_string(), false),
         LlmProvider::OpenAICompatible => {
-            let summary = summarize_extracted(extracted);
             // Reserve ~2000 tokens for prompt template + response.
             // Rough estimate: 1 token ≈ 3.5 chars.
             let max_chars = ((config.context_size as usize).saturating_sub(2000)) * 3;
-            if summary.len() > max_chars {
-                let mut truncated = summary[..max_chars].to_string();
-                truncated.push_str("\n// ... (truncated to fit context window)");
-                (truncated, true)
-            } else {
-                (summary, true)
-            }
+            (summarize_extracted(extracted, max_chars), true)
         }
     };
 
