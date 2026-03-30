@@ -1073,7 +1073,7 @@ fn cmd_init(source: &PathBuf, language: Option<&str>, output: Option<&PathBuf>, 
         println!("  {} Enriching with AI...", "⚙".cyan());
         let rt = tokio::runtime::Runtime::new()?;
         let start = std::time::Instant::now();
-        match rt.block_on(ai_init::ai_enrich_spec(&spec, &source_code, &extracted, config)) {
+        match rt.block_on(ai_init::ai_enrich_spec(&spec, &source_code, &extracted, config, "")) {
             Ok(enrichment) => {
                 ai_init::apply_enrichment(&mut spec, enrichment);
                 println!("  {} AI enrichment applied ({:.1}s)", "✓".green(), start.elapsed().as_secs_f64());
@@ -1164,13 +1164,33 @@ fn cmd_init_dir(
         }
     }
 
+    // Read all source files upfront (needed for toposort when --ai)
+    let mut file_sources: Vec<(PathBuf, String)> = Vec::new();
+    for entry in &source_files {
+        let source_code = std::fs::read_to_string(entry).unwrap_or_default();
+        file_sources.push((entry.clone(), source_code));
+    }
+
+    // When using AI, process in dependency order so we can pass context
+    let processing_order: Vec<usize> = if llm_config.is_some() {
+        let order = ai_init::toposort_files(&file_sources);
+        eprintln!("  {} Processing in dependency order", "ℹ".cyan());
+        order
+    } else {
+        (0..file_sources.len()).collect()
+    };
+
     // Create tokio runtime once (only needed for AI enrichment)
     let rt = llm_config.map(|_| tokio::runtime::Runtime::new()).transpose()?;
 
     let mut count = 0;
-    let total = source_files.len();
+    let total = file_sources.len();
+    // Accumulated enrichments keyed by module name (for dep context)
+    let mut enrichments: HashMap<String, ai_init::SpecEnrichment> = HashMap::new();
 
-    for (idx, entry) in source_files.iter().enumerate() {
+    for (step, &idx) in processing_order.iter().enumerate() {
+        let (ref entry, ref source_code) = file_sources[idx];
+
         let lang = detect_language(entry)
             .or_else(|| language.map(String::from))
             .unwrap_or_default();
@@ -1207,13 +1227,46 @@ fn cmd_init_dir(
 
         // AI enrichment if requested
         if let (Some(config), Some(rt)) = (llm_config, rt.as_ref()) {
-            let source_code = std::fs::read_to_string(entry).unwrap_or_default();
             if !source_code.is_empty() {
-                eprint!("  [{}/{}] {} Enriching {}...", idx + 1, total, "⚙".cyan(), entry.display());
+                // Build dep context from already-processed dependencies
+                let internal_deps = ai_init::extract_internal_deps(source_code);
+                let dep_enrichments: Vec<&ai_init::SpecEnrichment> = internal_deps.iter()
+                    .filter_map(|dep| enrichments.get(dep))
+                    .collect();
+                let dep_context = ai_init::format_dep_context(&dep_enrichments);
+
+                let dep_info = if dep_enrichments.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (deps: {})", internal_deps.iter()
+                        .filter(|d| enrichments.contains_key(*d))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", "))
+                };
+
+                eprint!("  [{}/{}] {} Enriching {}{}...",
+                    step + 1, total, "⚙".cyan(), entry.display(), dep_info);
                 let start = std::time::Instant::now();
-                match rt.block_on(ai_init::ai_enrich_spec(&spec, &source_code, &extracted, config)) {
+                match rt.block_on(ai_init::ai_enrich_spec(&spec, source_code, &extracted, config, &dep_context)) {
                     Ok(enrichment) => {
+                        // Store enrichment for downstream deps before applying
+                        let module_name = spec.module.clone();
                         ai_init::apply_enrichment(&mut spec, enrichment);
+                        // Re-extract enrichment from the applied spec for context
+                        let stored = ai_init::SpecEnrichment {
+                            description: spec.description.clone().unwrap_or_default(),
+                            api_entities: spec.exposes.iter()
+                                .map(|(name, e)| ai_init::ApiEntity {
+                                    name: name.clone(),
+                                    description: e.description.clone().unwrap_or_default(),
+                                })
+                                .collect(),
+                            forbidden_deps: Vec::new(),
+                            invariants: spec.invariants.clone(),
+                            layer: spec.layer.as_ref().map(|l| l.0.clone()),
+                        };
+                        enrichments.insert(module_name, stored);
                         eprintln!(" {} ({:.1}s)", "done".green(), start.elapsed().as_secs_f64());
                     }
                     Err(e) => {

@@ -143,6 +143,131 @@ fn summarize_extracted(extracted: &ExtractedModule, max_chars: usize) -> String 
     result.join("\n")
 }
 
+/// Extract internal module dependencies from source code.
+/// Scans for `use crate::module` and `crate::module::` patterns.
+/// Returns module names (e.g., ["spec", "behavioral", "extractors"]).
+pub fn extract_internal_deps(source_code: &str) -> Vec<String> {
+    let mut deps = Vec::new();
+    for line in source_code.lines() {
+        let trimmed = line.trim();
+        // Match: use crate::module_name
+        if let Some(rest) = trimmed.strip_prefix("use crate::") {
+            if let Some(module) = rest.split(|c: char| c == ':' || c == ';' || c == '{').next() {
+                let module = module.trim();
+                if !module.is_empty() && !deps.contains(&module.to_string()) {
+                    deps.push(module.to_string());
+                }
+            }
+        }
+        // Match: crate::module_name:: in code (not just use statements)
+        // This catches inline references like crate::types::TypeKind
+        for part in trimmed.split("crate::").skip(1) {
+            if let Some(module) = part.split(|c: char| c == ':' || c == ';' || c == '(' || c == ')' || c == ',' || c == ' ').next() {
+                let module = module.trim();
+                if !module.is_empty() && !deps.contains(&module.to_string()) {
+                    deps.push(module.to_string());
+                }
+            }
+        }
+    }
+    deps
+}
+
+/// Topologically sort files based on internal dependencies.
+/// Returns indices into the input slice, deps-first order.
+/// Files without deps come first. Cycles are broken arbitrarily.
+pub fn toposort_files(
+    files: &[(std::path::PathBuf, String)], // (path, source_code)
+) -> Vec<usize> {
+    use std::collections::{HashMap, VecDeque};
+
+    // Build module_name -> index mapping from file paths
+    let mut name_to_idx: HashMap<String, usize> = HashMap::new();
+    for (i, (path, _)) in files.iter().enumerate() {
+        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            name_to_idx.insert(stem.to_string(), i);
+        }
+        // Also map by parent/stem for nested modules (e.g., extractors/mod -> extractors)
+        if let Some(parent) = path.parent() {
+            if let Some(parent_name) = parent.file_name().and_then(|s| s.to_str()) {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if stem == "mod" {
+                        name_to_idx.insert(parent_name.to_string(), i);
+                    }
+                }
+            }
+        }
+    }
+
+    let n = files.len();
+    let mut edges: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut in_degree = vec![0usize; n];
+
+    for (i, (_, source)) in files.iter().enumerate() {
+        let deps = extract_internal_deps(source);
+        for dep in &deps {
+            if let Some(&j) = name_to_idx.get(dep) {
+                if j != i {
+                    edges[j].push(i); // j must come before i
+                    in_degree[i] += 1;
+                }
+            }
+        }
+    }
+
+    // Kahn's algorithm
+    let mut queue: VecDeque<usize> = VecDeque::new();
+    for i in 0..n {
+        if in_degree[i] == 0 {
+            queue.push_back(i);
+        }
+    }
+
+    let mut order = Vec::with_capacity(n);
+    while let Some(i) = queue.pop_front() {
+        order.push(i);
+        for &j in &edges[i] {
+            in_degree[j] -= 1;
+            if in_degree[j] == 0 {
+                queue.push_back(j);
+            }
+        }
+    }
+
+    // Append any remaining (cycles) in original order
+    if order.len() < n {
+        for i in 0..n {
+            if !order.contains(&i) {
+                order.push(i);
+            }
+        }
+    }
+
+    order
+}
+
+/// Format already-generated specs as compact context for the LLM prompt.
+/// Returns a string like:
+///   Dependency `spec`: Core data structures for module specs...
+///   - ModuleSpec: Complete specification for a single module
+///   - Invariants: Layer dependencies are acyclic; ...
+pub fn format_dep_context(dep_specs: &[&SpecEnrichment]) -> String {
+    let mut parts = Vec::new();
+    for spec in dep_specs {
+        let mut lines = vec![format!("- {}", spec.description)];
+        // Just entity names and descriptions, very compact
+        for ent in &spec.api_entities {
+            lines.push(format!("  - {}: {}", ent.name, ent.description));
+        }
+        if !spec.invariants.is_empty() {
+            let inv_str = spec.invariants.join("; ");
+            lines.push(format!("  - Invariants: {}", inv_str));
+        }
+        parts.push(lines.join("\n"));
+    }
+    parts.join("\n")
+}
+
 fn build_enrichment_prompt(
     module_name: &str,
     code_content: &str,
@@ -150,6 +275,7 @@ fn build_enrichment_prompt(
     language: &str,
     provider: &LlmProvider,
     is_summary: bool,
+    dep_context: &str,
 ) -> String {
     let no_think = match provider {
         LlmProvider::OpenAICompatible => " /no_think",
@@ -164,12 +290,18 @@ fn build_enrichment_prompt(
         "## Source code:"
     };
 
+    let dep_section = if dep_context.is_empty() {
+        String::new()
+    } else {
+        format!("\n## Dependencies (already specified):\n{}\n", dep_context)
+    };
+
     format!(
         r#"You are analyzing a {language} source module to generate a specification.
 
 ## Module: {module_name}
 ## Public entities found: {entities_list}
-
+{dep_section}
 {code_label}
 ```
 {code_content}
@@ -195,11 +327,13 @@ Respond with ONLY a JSON object, no other text.{no_think}"#
 /// Call the LLM to enrich a lean spec skeleton with AI-generated content.
 /// For local LLMs (OpenAI-compatible), sends a compact signature summary
 /// instead of full source code to fit within context limits.
+/// `dep_context` is a formatted summary of already-processed dependency specs.
 pub async fn ai_enrich_spec(
     spec: &ModuleSpec,
     source_code: &str,
     extracted: &ExtractedModule,
     config: &LlmConfig,
+    dep_context: &str,
 ) -> anyhow::Result<SpecEnrichment> {
     let language = spec.language.as_deref().unwrap_or("unknown");
     let entity_names: Vec<String> = spec.exposes.keys().cloned().collect();
@@ -207,9 +341,10 @@ pub async fn ai_enrich_spec(
     let (code_content, is_summary) = match config.provider {
         LlmProvider::Anthropic => (source_code.to_string(), false),
         LlmProvider::OpenAICompatible => {
-            // Reserve ~2000 tokens for prompt template + response.
+            // Reserve ~2000 tokens for prompt template + response + dep context.
             // Rough estimate: 1 token ≈ 3.5 chars.
-            let max_chars = ((config.context_size as usize).saturating_sub(2000)) * 3;
+            let dep_tokens = dep_context.len() / 3;
+            let max_chars = ((config.context_size as usize).saturating_sub(2000 + dep_tokens)) * 3;
             (summarize_extracted(extracted, max_chars), true)
         }
     };
@@ -221,6 +356,7 @@ pub async fn ai_enrich_spec(
         language,
         &config.provider,
         is_summary,
+        dep_context,
     );
 
     let api_key = config.api_key.as_deref().unwrap_or("");
