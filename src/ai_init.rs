@@ -179,7 +179,19 @@ pub async fn ai_enrich_spec(
 
     let (code_content, is_summary) = match config.provider {
         LlmProvider::Anthropic => (source_code.to_string(), false),
-        LlmProvider::OpenAICompatible => (summarize_extracted(extracted), true),
+        LlmProvider::OpenAICompatible => {
+            let summary = summarize_extracted(extracted);
+            // Reserve ~2000 tokens for prompt template + response.
+            // Rough estimate: 1 token ≈ 3.5 chars.
+            let max_chars = ((config.context_size as usize).saturating_sub(2000)) * 3;
+            if summary.len() > max_chars {
+                let mut truncated = summary[..max_chars].to_string();
+                truncated.push_str("\n// ... (truncated to fit context window)");
+                (truncated, true)
+            } else {
+                (summary, true)
+            }
+        }
     };
 
     let prompt = build_enrichment_prompt(
