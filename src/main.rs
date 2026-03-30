@@ -1064,13 +1064,14 @@ fn cmd_init(source: &PathBuf, language: Option<&str>, output: Option<&PathBuf>, 
         let source_code = std::fs::read_to_string(source)?;
         println!("  {} Enriching with AI...", "⚙".cyan());
         let rt = tokio::runtime::Runtime::new()?;
+        let start = std::time::Instant::now();
         match rt.block_on(ai_init::ai_enrich_spec(&spec, &source_code, &extracted, config)) {
             Ok(enrichment) => {
                 ai_init::apply_enrichment(&mut spec, enrichment);
-                println!("  {} AI enrichment applied", "✓".green());
+                println!("  {} AI enrichment applied ({:.1}s)", "✓".green(), start.elapsed().as_secs_f64());
             }
             Err(e) => {
-                eprintln!("  {} AI enrichment failed: {} — using lean skeleton", "⚠".yellow(), e);
+                eprintln!("  {} AI enrichment failed: {} — using lean skeleton ({:.1}s)", "⚠".yellow(), e, start.elapsed().as_secs_f64());
             }
         }
     }
@@ -1201,13 +1202,14 @@ fn cmd_init_dir(
             let source_code = std::fs::read_to_string(entry).unwrap_or_default();
             if !source_code.is_empty() {
                 eprint!("  [{}/{}] {} Enriching {}...", idx + 1, total, "⚙".cyan(), entry.display());
+                let start = std::time::Instant::now();
                 match rt.block_on(ai_init::ai_enrich_spec(&spec, &source_code, &extracted, config)) {
                     Ok(enrichment) => {
                         ai_init::apply_enrichment(&mut spec, enrichment);
-                        eprintln!(" {}", "done".green());
+                        eprintln!(" {} ({:.1}s)", "done".green(), start.elapsed().as_secs_f64());
                     }
                     Err(e) => {
-                        eprintln!(" {} {}", "failed:".yellow(), e);
+                        eprintln!(" {} {} ({:.1}s)", "failed:".yellow(), e, start.elapsed().as_secs_f64());
                     }
                 }
             }
