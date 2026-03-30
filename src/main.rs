@@ -154,9 +154,10 @@ enum Commands {
 }
 
 fn main() -> Result<()> {
+    let start = std::time::Instant::now();
     let cli = Cli::parse();
 
-    match cli.command {
+    let result = match cli.command {
         Commands::Check {
             path,
             source,
@@ -201,7 +202,14 @@ fn main() -> Result<()> {
         Commands::Toposort { path, all } => cmd_toposort(&path, all),
         Commands::Deps { path } => cmd_deps(&path),
         Commands::InitSkill { global, skill } => cmd_init_skill(global, skill.as_deref()),
+    };
+
+    let elapsed = start.elapsed();
+    if elapsed.as_secs() >= 1 {
+        eprintln!("\nCompleted in {:.1}s", elapsed.as_secs_f64());
     }
+
+    result
 }
 
 fn cmd_check(
