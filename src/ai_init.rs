@@ -1,5 +1,5 @@
 // AI-assisted spec initialization: enriches a lean mechanical skeleton
-// with descriptions, API curation, forbidden deps, invariants, and layer.
+// with descriptions, API curation, forbidden deps, and layer.
 
 use crate::behavioral::{LlmConfig, LlmProvider};
 use crate::extractors::ExtractedModule;
@@ -15,8 +15,6 @@ pub struct SpecEnrichment {
     pub api_entities: Vec<ApiEntity>,
     /// Suggested forbidden dependencies with reasons
     pub forbidden_deps: Vec<ForbiddenDep>,
-    /// Non-obvious invariants a developer should know
-    pub invariants: Vec<String>,
     /// Suggested architectural layer
     pub layer: Option<String>,
 }
@@ -259,10 +257,6 @@ pub fn format_dep_context(dep_specs: &[&SpecEnrichment]) -> String {
         for ent in &spec.api_entities {
             lines.push(format!("  - {}: {}", ent.name, ent.description));
         }
-        if !spec.invariants.is_empty() {
-            let inv_str = spec.invariants.join("; ");
-            lines.push(format!("  - Invariants: {}", inv_str));
-        }
         parts.push(lines.join("\n"));
     }
     parts.join("\n")
@@ -316,9 +310,7 @@ Analyze this module and produce a JSON object with these fields:
 
 3. "forbidden_deps": Array of objects {{"dep": "...", "reason": "..."}} — dependencies this module should NEVER have, based on its architectural role. Think about separation of concerns. Only suggest deps that would be a clear architectural violation.
 
-4. "invariants": Array of strings — non-obvious properties that a developer modifying this code should know. Do NOT state things obvious from the type system or function signatures. Focus on: error handling contracts, performance assumptions, ordering requirements, safety properties, or design decisions that aren't self-evident.
-
-5. "layer": One of "infrastructure", "domain", "application", "interface", or null if unclear. Based on the module's role: infrastructure=external I/O, domain=core business logic, application=orchestration, interface=user-facing.
+4. "layer": One of "infrastructure", "domain", "application", "interface", or null if unclear. Based on the module's role: infrastructure=external I/O, domain=core business logic, application=orchestration, interface=user-facing.
 
 Respond with ONLY a JSON object, no other text.{no_think}"#
     )
@@ -505,8 +497,6 @@ pub fn apply_enrichment(spec: &mut ModuleSpec, enrichment: SpecEnrichment) {
         .into_iter()
         .map(|fd| fd.dep)
         .collect();
-
-    spec.invariants = enrichment.invariants;
 
     if let Some(layer) = enrichment.layer {
         spec.layer = Some(crate::spec::Layer::new(&layer));

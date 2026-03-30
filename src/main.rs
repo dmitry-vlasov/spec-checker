@@ -1263,7 +1263,6 @@ fn cmd_init_dir(
                                 })
                                 .collect(),
                             forbidden_deps: Vec::new(),
-                            invariants: spec.invariants.clone(),
                             layer: spec.layer.as_ref().map(|l| l.0.clone()),
                         };
                         enrichments.insert(module_name, stored);
