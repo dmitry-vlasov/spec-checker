@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 mod ai_init;
+mod ai_refine;
 mod behavioral;
 mod checker;
 mod dependency;
@@ -115,6 +116,29 @@ enum Commands {
         llm_provider: Option<String>,
     },
 
+    /// Refine specs with behavioral contracts (requires/ensures/modifies/invariants)
+    Refine {
+        /// Path to spec directory
+        #[arg(default_value = "./specs")]
+        path: PathBuf,
+
+        /// Source code root
+        #[arg(short, long, default_value = ".")]
+        source: PathBuf,
+
+        /// Use AI to add behavioral contracts
+        #[arg(long)]
+        ai: bool,
+
+        /// Process only specs for this source file
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// LLM provider from config (for --ai)
+        #[arg(long)]
+        llm_provider: Option<String>,
+    },
+
     /// Show diff between spec and implementation
     Diff {
         /// Spec file
@@ -197,6 +221,14 @@ fn main() -> Result<()> {
                 None
             };
             cmd_init(&source, language.as_deref(), output.as_ref(), &exclude, llm_config.as_ref())
+        }
+        Commands::Refine { path, source, ai, file, llm_provider } => {
+            let llm_config = if ai {
+                Some(load_llm_config(None, Some("full"), None, None, None, llm_provider.as_deref()))
+            } else {
+                anyhow::bail!("spec-checker refine requires --ai flag")
+            };
+            cmd_refine(&path, &source, llm_config.as_ref(), file.as_ref())
         }
         Commands::Diff { spec, source } => cmd_diff(&spec, &source),
         Commands::Toposort { path, all } => cmd_toposort(&path, all),
@@ -1313,6 +1345,185 @@ fn cmd_init_dir(
     Ok(())
 }
 
+fn cmd_refine(
+    spec_path: &PathBuf,
+    source_root: &PathBuf,
+    llm_config: Option<&behavioral::LlmConfig>,
+    file_filter: Option<&PathBuf>,
+) -> Result<()> {
+    let config = llm_config.ok_or_else(|| anyhow::anyhow!("--ai flag required for refine"))?;
+
+    let mut specs = load_specs(spec_path)?;
+    if specs.is_empty() {
+        println!("{}", "No spec files found.".yellow());
+        return Ok(());
+    }
+
+    // Filter to single file if requested
+    if let Some(filter) = file_filter {
+        let filter_str = filter.to_string_lossy();
+        specs.retain(|s| {
+            s.source_path.as_deref() == Some(filter_str.as_ref())
+        });
+        if specs.is_empty() {
+            anyhow::bail!("No spec found for source file: {}", filter_str);
+        }
+    }
+
+    // Toposort by depends_on
+    let mut path_to_idx: HashMap<String, usize> = HashMap::new();
+    let mut module_to_idx: HashMap<String, usize> = HashMap::new();
+    for (i, spec) in specs.iter().enumerate() {
+        if let Some(ref sp) = spec.source_path {
+            path_to_idx.insert(sp.clone(), i);
+        }
+        module_to_idx.insert(spec.module.clone(), i);
+    }
+
+    let n = specs.len();
+    let mut edges: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut in_degree = vec![0usize; n];
+
+    for (i, spec) in specs.iter().enumerate() {
+        for dep in &spec.depends_on {
+            if let Some(&j) = path_to_idx.get(dep).or_else(|| module_to_idx.get(dep)) {
+                if j != i {
+                    edges[j].push(i);
+                    in_degree[i] += 1;
+                }
+            }
+        }
+    }
+
+    let mut queue: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+    for i in 0..n {
+        if in_degree[i] == 0 {
+            queue.push_back(i);
+        }
+    }
+    let mut order: Vec<usize> = Vec::with_capacity(n);
+    while let Some(i) = queue.pop_front() {
+        order.push(i);
+        for &j in &edges[i] {
+            in_degree[j] -= 1;
+            if in_degree[j] == 0 {
+                queue.push_back(j);
+            }
+        }
+    }
+    // Append any remaining (cycles)
+    for i in 0..n {
+        if !order.contains(&i) {
+            order.push(i);
+        }
+    }
+
+    let rt = tokio::runtime::Runtime::new()?;
+    let total = specs.len();
+
+    println!("{}", "Refining specs with behavioral contracts".bold().cyan());
+
+    for (step, &idx) in order.iter().enumerate() {
+        let spec = &specs[idx];
+        let source_path = match &spec.source_path {
+            Some(sp) => source_root.join(sp),
+            None => continue,
+        };
+
+        let source_code = std::fs::read_to_string(&source_path).unwrap_or_default();
+        if source_code.is_empty() {
+            continue;
+        }
+
+        let detected_lang = detect_language(&source_path);
+        let lang = spec.language.as_deref()
+            .or(detected_lang.as_deref())
+            .unwrap_or("rust");
+        let extractor = match extractors::get_extractor(lang) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let extracted = match extractor.extract(&source_path) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        // Build dep context from already-refined specs
+        let dep_specs: Vec<&ModuleSpec> = spec.depends_on.iter()
+            .filter_map(|dep| {
+                path_to_idx.get(dep).or_else(|| module_to_idx.get(dep))
+                    .map(|&j| &specs[j])
+            })
+            .collect();
+        let dep_context = ai_refine::format_dep_context(&dep_specs);
+
+        eprint!("  [{}/{}] {} Refining {}...",
+            step + 1, total, "⚙".cyan(),
+            spec.source_path.as_deref().unwrap_or(&spec.module));
+        let start = std::time::Instant::now();
+
+        match rt.block_on(ai_refine::ai_refine_spec(spec, &source_code, &extracted, config, &dep_context)) {
+            Ok(refinement) => {
+                let spec_mut = &mut specs[idx];
+                ai_refine::apply_refinement(spec_mut, refinement);
+                // Recompute source hash
+                if let Ok(hash) = spec::compute_source_hash(&source_path) {
+                    spec_mut.source_hash = Some(hash);
+                }
+                eprintln!(" {} ({:.1}s)", "done".green(), start.elapsed().as_secs_f64());
+            }
+            Err(e) => {
+                eprintln!(" {} {} ({:.1}s)", "failed:".yellow(), e, start.elapsed().as_secs_f64());
+            }
+        }
+    }
+
+    // Write all specs back
+    println!();
+    let mut written = 0;
+    for spec in &specs {
+        let yaml = serde_yaml::to_string(spec)?;
+        // Find the spec file path
+        let spec_file = find_spec_file(spec_path, spec);
+        if let Some(path) = spec_file {
+            std::fs::write(&path, &yaml)?;
+            println!("  {} {}", "✓".green(), path.display());
+            written += 1;
+        }
+    }
+    println!("\n{} Refined {} spec file(s)", "Done:".green().bold(), written);
+
+    Ok(())
+}
+
+/// Find the .spec.yaml file for a given spec in the spec directory.
+fn find_spec_file(spec_dir: &PathBuf, spec: &ModuleSpec) -> Option<PathBuf> {
+    // Try module.spec.yaml
+    let by_module = spec_dir.join(format!("{}.spec.yaml", spec.module));
+    if by_module.exists() {
+        return Some(by_module);
+    }
+    // Try mirroring source_path
+    if let Some(sp) = &spec.source_path {
+        let relative = PathBuf::from(sp).with_extension("spec.yaml");
+        let mirrored = spec_dir.join(&relative);
+        if mirrored.exists() {
+            return Some(mirrored);
+        }
+    }
+    // Search for any file containing this module name
+    if let Ok(entries) = glob::glob(&format!("{}/**/*.spec.yaml", spec_dir.display())) {
+        for entry in entries.flatten() {
+            if let Ok(content) = std::fs::read_to_string(&entry) {
+                if content.contains(&format!("module: {}", spec.module)) {
+                    return Some(entry);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn cmd_diff(spec_path: &PathBuf, source_path: &PathBuf) -> Result<()> {
     println!("{}", "Spec vs Implementation Diff".bold().cyan());
     println!("{}", "=".repeat(40));
@@ -1548,6 +1759,15 @@ fn cmd_toposort(spec_path: &PathBuf, all: bool) -> Result<()> {
 
 fn cmd_init_skill(global: bool, skill: Option<&str>) -> Result<()> {
     let all_skills: &[(&str, &str, &[&str], bool)] = &[
+        (
+            "spec-init",
+            include_str!("../skills/spec-init.md"),
+            &[
+                "  /spec-init                        Init specs using Claude Code",
+                "  /spec-init src/                   Init specs for a specific directory",
+            ],
+            true, // installed by default
+        ),
         (
             "spec-refine",
             include_str!("../skills/spec-refine.md"),

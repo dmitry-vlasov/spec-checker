@@ -14,6 +14,6 @@ fn main() {
     };
 
     println!("cargo:rustc-env=GIT_HASH={}", git_hash);
-    println!("cargo:rerun-if-changed=.git/HEAD");
-    println!("cargo:rerun-if-changed=.git/refs/");
+    // Always rerun build script so git hash stays current
+    println!("cargo:rerun-if-changed=FORCE_REBUILD");
 }

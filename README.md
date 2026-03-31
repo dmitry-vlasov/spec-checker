@@ -536,9 +536,13 @@ spec-checker init --language rust ./src/main.rs
 # Generate specs for entire directory
 spec-checker init --language rust ./src/ -o ./specs/
 
-# AI-enriched init: adds descriptions, curates API, suggests invariants and forbidden deps
+# AI-enriched init: adds descriptions, curates API, forbidden deps, layer
 spec-checker init --ai ./src/
 spec-checker init --ai --llm-provider anthropic ./src/main.rs
+
+# Refine specs with behavioral contracts (requires/ensures/modifies/invariants)
+spec-checker refine --ai
+spec-checker refine --ai --file src/checker.rs
 
 # Exclude directories from init (persisted to .spec-checker.yaml)
 spec-checker init --language flow9 . -o ./specs --exclude 'tools/**' --exclude 'tests/**'
@@ -557,30 +561,48 @@ spec-checker init-skill --only flow9
 spec-checker init-skill --only spec-checker
 ```
 
-## Spec Initialization
+## Spec Generation: 2x2 Matrix
 
-`spec-checker init` generates lean spec skeletons focused on intent, not code mirroring:
+Spec generation has two dimensions — **what** to do and **how** to do it:
 
-- **Entities** are listed with just their `kind` (function/type/variable) — no type_constraints duplicating struct fields or function signatures
-- **Dependencies** (`depends_on`, `external_deps`) are omitted — they're derivable from source code
-- **Forbidden deps**, invariants, descriptions, and layer are left empty for you to fill
+|  | **Init** (scaffold from scratch) | **Refine** (add behavioral contracts) |
+|---|---|---|
+| **CLI** (`--ai`, LLM API) | `spec-checker init --ai` | `spec-checker refine --ai` |
+| **Claude Code** (skill) | `/spec-init` | `/spec-refine` |
 
-### AI-Enriched Init (`--ai`)
+### Init: structural scaffolding
 
-With `--ai`, the spec skeleton is sent to an LLM along with the source code for enrichment:
+Creates specs from source code: module description, API curation, forbidden deps, layer classification.
+
+- `spec-checker init --ai` — batch, automated, uses configured LLM provider. Good for CI or when Claude Code isn't available.
+- `/spec-init` — interactive, uses Claude Code's intelligence. Higher quality, no API key needed.
+
+### Refine: behavioral contracts
+
+Deepens existing specs with per-function requires/ensures/modifies and module-level invariants.
+
+- `spec-checker refine --ai` — batch, automated, uses configured LLM provider.
+- `/spec-refine` — interactive, uses Claude Code. Best quality for complex behavioral contracts.
+
+Both process files in dependency order so downstream specs can reference upstream contracts.
+
+### Recommended workflow
 
 ```bash
-spec-checker init --ai ./src/
+# 1. Generate lean skeletons
+spec-checker init .
+
+# 2. Enrich with AI (choose one)
+spec-checker init --ai .          # via LLM API
+# or: /spec-init                  # via Claude Code
+
+# 3. Add behavioral contracts (choose one)
+spec-checker refine --ai          # via LLM API
+# or: /spec-refine                # via Claude Code
+
+# 4. Validate
+spec-checker check .
 ```
-
-The AI generates:
-- **Module description** — one sentence about what the module is *for*
-- **API curation** — filters `exposes` down to the intended public contract, dropping internal helpers that happen to be public, and adds one-line descriptions
-- **Forbidden deps** — suggests dependencies that would violate the module's architectural role
-- **Invariants** — non-obvious properties (error handling, ordering, safety) that aren't self-evident from the code
-- **Layer** — classifies the module (infrastructure/domain/application/interface)
-
-Uses the LLM provider from `.spec-checker.yaml` (or override with `--llm-provider`). Without `--ai`, you get a minimal skeleton suitable for manual enrichment or `/spec-refine`.
 
 ## Claude Code Skills
 
@@ -588,12 +610,13 @@ Spec-checker ships with Claude Code skills that can be installed into any projec
 
 | Skill | Installed by default | Usage | Purpose |
 |-------|---------------------|-------|---------|
+| `spec-init` | Yes | `/spec-init [dir]` | Init specs using Claude Code (no API key needed) |
+| `spec-refine` | Yes | `/spec-refine [file]` | Refine specs with per-function behavioral contracts |
 | `spec-checker` | Yes | `/spec-checker <mode>` | AI guidance map: use specs for reasoning, planning, refactoring, and Q&A |
-| `spec-refine` | Yes | `/spec-refine [file]` | Refine specs with per-function behavioral contracts (requires/ensures/modifies) |
 | `flow9` | No (`--only flow9`) | `/flow9` | Flow9 language reference for the AI agent |
 
 ```bash
-# Install default skills (spec-checker + spec-refine)
+# Install default skills (spec-init + spec-refine + spec-checker)
 spec-checker init-skill
 
 # Install all skills including language-specific ones
@@ -603,11 +626,13 @@ spec-checker init-skill --only all
 spec-checker init-skill --global
 ```
 
+### spec-init
+
+The `spec-init` skill scaffolds specs using Claude Code. It runs `spec-checker init` to create lean skeletons, then enriches each one with descriptions, API curation, forbidden deps, and layer classification. Processes in dependency order for cross-module context.
+
 ### spec-refine
 
-The `spec-refine` skill deepens existing specs with per-function behavioral contracts (`requires`, `ensures`, `modifies`). It processes files in dependency order (using `spec-checker toposort`) so that each module's contracts can reference its dependencies. After writing specs, it updates `source_hash` to prevent staleness warnings.
-
-This is the second step after `spec-checker init --ai`: init creates the structural skeleton (descriptions, API, layer, forbidden_deps), then `/spec-refine` adds detailed behavioral contracts using Claude Code's intelligence.
+The `spec-refine` skill deepens existing specs with per-function behavioral contracts (`requires`, `ensures`, `modifies`, `invariants`). Processes in dependency order so each module's contracts can reference upstream guarantees.
 
 ```bash
 # Fill specs for the whole project

@@ -40,7 +40,7 @@ const INITIAL_BACKOFF_MS: u64 = 2000;
 /// fitting within a character budget. Prioritizes: type definitions,
 /// public function signatures, then private signatures. Drops whole
 /// entities rather than cutting mid-definition.
-fn summarize_extracted(extracted: &ExtractedModule, max_chars: usize) -> String {
+pub fn summarize_extracted(extracted: &ExtractedModule, max_chars: usize) -> String {
     // Build blocks in priority order. Each block is a self-contained chunk.
     let mut blocks: Vec<(u8, String)> = Vec::new(); // (priority, content) — lower = more important
 
