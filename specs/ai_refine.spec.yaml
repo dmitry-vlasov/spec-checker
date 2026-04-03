@@ -1,0 +1,29 @@
+module: ai_refine
+description: "AI-assisted spec refinement: adds behavioral contracts (requires, ensures, modifies, invariants) to existing enriched specs via LLM."
+language: rust
+source_path: src/ai_refine.rs
+source_hash: a4f7239153cab8e6
+layer: application
+exposes:
+  ai_refine_spec:
+    kind: function
+    description: "Call the LLM to generate behavioral contracts for functions in an existing enriched spec."
+  apply_refinement:
+    kind: function
+    description: "Merge AI-generated behavioral contracts into a spec, adding without removing existing fields."
+  format_dep_context:
+    kind: function
+    description: "Format already-refined dependency specs as compact context for the refinement prompt."
+  SpecRefinement:
+    kind: type
+    description: "AI-generated behavioral refinement payload: per-entity contracts and module-level invariants."
+  EntityRefinement:
+    kind: type
+    description: "Behavioral contracts for a single entity: requires, ensures, and modifies lists."
+forbidden_deps:
+  - main
+  - checker
+  - ai_init
+owns_state:
+  - SpecRefinement
+  - EntityRefinement

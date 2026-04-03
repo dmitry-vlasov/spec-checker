@@ -1,128 +1,49 @@
-# Spec Checker - Type representation module
-# Inherits: language=rust, context=core, stability=stable (root)
-
 module: types
-description: "Language-agnostic type representations for extracted source code structures (types, fields, functions, generics)"
+description: Shared data types that represent source-code entities (types, functions, fields) extracted by language-specific parsers.
+language: rust
 source_path: src/types.rs
-
+source_hash: adf70cb876eb3114
 layer: domain
-
 exposes:
   TypeRepr:
     kind: type
-    description: "Syntactic representation of a type expression as written in source code"
-    type_constraints:
-      - "is_sum(Self)"
-      - "cloneable"
-      - "has_variant(Self, Named)"
-      - "has_variant(Self, Applied)"
-      - "has_variant(Self, Tuple)"
-      - "has_variant(Self, Reference)"
-      - "has_variant(Self, Slice)"
-      - "has_variant(Self, Array)"
-      - "has_variant(Self, FnPointer)"
-      - "has_variant(Self, Unit)"
-      - "has_variant(Self, Infer)"
-    ensures:
-      - Implements Display for human-readable output
-      - Implements PartialEq for structural equality
-
+    description: Syntactic representation of a type expression as written in source code (e.g. Named, Applied, Tuple, Reference, FnPointer).
   TypeKind:
     kind: type
-    description: "Discriminator for the kind of type definition (struct, enum, trait, alias)"
-    type_constraints:
-      - "is_sum(Self)"
-      - "cloneable"
-      - "has_variant(Self, Struct)"
-      - "has_variant(Self, Enum)"
-      - "has_variant(Self, Trait)"
-      - "has_variant(Self, TypeAlias)"
-    ensures:
-      - Implements Display
-
+    description: Discriminant for type definitions — struct, enum, trait, or type alias.
   TypeInfo:
     kind: type
-    description: "Rich type definition extracted from source code, including fields, variants, trait impls, and derives"
-    type_constraints:
-      - "is_product(Self)"
-      - "cloneable"
-      - "has_field(Self, name)"
-      - "has_field(Self, kind)"
-      - "has_field(Self, generics)"
-      - "has_field(Self, fields)"
-      - "has_field(Self, variants)"
-      - "has_field(Self, trait_impls)"
-      - "has_field(Self, derives)"
-
-  FieldInfo:
-    kind: type
-    description: "A named field with its type and visibility in a struct or enum variant"
-    type_constraints:
-      - "is_product(Self)"
-      - "cloneable"
-      - "has_field(Self, name)"
-      - "has_field(Self, type_repr)"
-      - "has_field(Self, visibility)"
-
-  VariantInfo:
-    kind: type
-    description: "An enum variant with its name and associated fields"
-    type_constraints:
-      - "is_product(Self)"
-      - "cloneable"
-      - "has_field(Self, name)"
-      - "has_field(Self, fields)"
-
+    description: Rich type definition extracted from source, including fields, variants, trait impls, and derives.
   FunctionInfo:
     kind: type
-    description: "Structured function/method information with parameters, return type, and generics"
-    type_constraints:
-      - "is_product(Self)"
-      - "cloneable"
-      - "has_field(Self, name)"
-      - "has_field(Self, params)"
-      - "has_field(Self, return_type)"
-      - "has_field(Self, generics)"
-
+    description: Structured function/method signature with parameters, return type, and generics.
   ParamInfo:
     kind: type
-    description: "A function parameter with optional name, type, and self-receiver flag"
-    type_constraints:
-      - "is_product(Self)"
-      - "cloneable"
-      - "has_field(Self, name)"
-      - "has_field(Self, type_repr)"
-      - "has_field(Self, is_receiver)"
-
-  Visibility:
+    description: A single function parameter with optional name and structured type.
+  FieldInfo:
     kind: type
-    description: "Access level of a field or item: Public or Private"
-    type_constraints:
-      - "is_sum(Self)"
-      - "cloneable"
-      - "has_variant(Self, Public)"
-      - "has_variant(Self, Private)"
-
+    description: A named field with its type and visibility (used in structs and enum variants).
+  VariantInfo:
+    kind: type
+    description: An enum variant with its name and fields.
   GenericParam:
     kind: type
-    description: "A generic type parameter with optional trait bounds"
-    type_constraints:
-      - "is_product(Self)"
-      - "cloneable"
-      - "has_field(Self, name)"
-      - "has_field(Self, bounds)"
-
-depends_on: []
-
-external_deps: []
-
+    description: A generic type parameter with optional trait bounds.
+  Visibility:
+    kind: type
+    description: Visibility qualifier for fields and items (Public or Private).
 forbidden_deps:
-  - syn           # types module is language-agnostic representation
-  - serde         # not serialized to YAML/JSON
-  - regex
-
-invariants:
-  - "TypeRepr is syntactic, not semantic (no type resolution)"
-  - "TypeRepr equality is structural"
-  - "Display output can be re-parsed by parse_type_repr_from_str"
-  - "No unsafe code"
+  - extractors
+  - checker
+  - ai
+  - cli
+owns_state:
+  - TypeRepr
+  - TypeKind
+  - GenericParam
+  - Visibility
+  - FieldInfo
+  - VariantInfo
+  - TypeInfo
+  - ParamInfo
+  - FunctionInfo

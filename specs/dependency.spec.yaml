@@ -1,0 +1,41 @@
+module: dependency
+description: Multi-project dependency graph resolver that transitively loads project configs, detects cycles, deduplicates diamonds, and produces a topologically sorted project list.
+language: rust
+source_path: src/dependency.rs
+source_hash: 8a22900b426aa92a
+layer: infrastructure
+forbidden_deps:
+  - src/cli.rs
+  - src/ai_enrichment.rs
+  - src/rules.rs
+  - src/smt.rs
+  - src/type_formula.rs
+  - src/extractors
+exposes:
+  ResolvedProject:
+    kind: type
+    description: A resolved project node holding its name, root path, loaded specs/subsystems, public modules, and dependency names.
+  ResolvedProject.is_module_public:
+    kind: function
+    description: Check whether a module is part of this project's public API (via explicit list, subsystem membership, or all-public fallback).
+  DependencyGraph:
+    kind: type
+    description: The full resolved multi-project dependency graph in topological order.
+  DependencyGraph.resolve:
+    kind: function
+    description: Build the dependency graph starting from a root project directory with transitive resolution and cycle detection.
+  DependencyGraph.get:
+    kind: function
+    description: Look up a project by name.
+  DependencyGraph.root_project:
+    kind: function
+    description: Return the root project (last in topological order).
+  DependencyGraph.parse_cross_ref:
+    kind: function
+    description: Split a cross-project reference like "lib::module" into (project, local_ref), or None for local refs.
+  DependencyGraph.dependencies:
+    kind: function
+    description: Iterate all dependency projects excluding the root.
+owns_state:
+  - ResolvedProject
+  - DependencyGraph

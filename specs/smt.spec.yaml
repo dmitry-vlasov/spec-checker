@@ -1,131 +1,67 @@
-# Spec Checker - SMT solver integration
-# Inherits: language=rust, context=core, stability=stable (root)
-
 module: smt
-description: "SMT solver integration via z3 subprocess for formal verification of numeric and state-ownership constraints"
+description: SMT solver integration that generates SMT-LIB2 queries and invokes z3 to verify constraint consistency in the middle tier of the verification cascade.
+language: rust
 source_path: src/smt.rs
-
-layer: infrastructure    # External tool integration
-
+source_hash: c1a2b5c090a8377b
+layer: infrastructure
+forbidden_deps:
+  - src/main.rs
+  - src/cli.rs
+  - src/spec.rs
+  - src/rules.rs
+  - src/extractors
 exposes:
-  SmtQuery:
-    kind: type
-    description: "Builder for SMT-LIB2 queries with integer/boolean declarations and assertions"
-    type_constraints:
-      - "is_product(Self)"
-      - "cloneable"
-      - "has_field(Self, declarations)"
-      - "has_field(Self, assertions)"
-
   SmtResult:
     kind: type
-    description: "Result of an SMT satisfiability check: Sat, Unsat, Unknown, or Error"
-    type_constraints:
-      - "is_sum(Self)"
-      - "cloneable"
-      - "has_variant(Self, Sat)"
-      - "has_variant(Self, Unsat)"
-      - "has_variant(Self, Unknown)"
-      - "has_variant(Self, Error)"
-
+    description: Outcome of an SMT query — sat, unsat, unknown, or error.
+  SmtQuery:
+    kind: type
+    description: Builder for SMT-LIB2 assertion sets with variable declarations and constraints.
   SmtQuery.new:
     kind: function
-    description: "Creates an empty SMT query with no declarations or assertions"
-    type_constraints:
-      - "equals(return, Self)"
-    ensures:
-      - Returns empty query with no declarations or assertions
-
+    description: Create an empty SMT query.
+  SmtQuery.declare_int:
+    kind: function
+    description: Declare an integer variable in the query.
+  SmtQuery.declare_bool:
+    kind: function
+    description: Declare a boolean variable in the query.
+  SmtQuery.assert_raw:
+    kind: function
+    description: Add a raw SMT-LIB2 assertion expression.
+  SmtQuery.assert_eq:
+    kind: function
+    description: Assert equality between two expressions.
+  SmtQuery.assert_ge:
+    kind: function
+    description: Assert a >= b.
+  SmtQuery.assert_gt:
+    kind: function
+    description: Assert a > b.
+  SmtQuery.assert_ne:
+    kind: function
+    description: Assert a != b.
+  SmtQuery.assert_implies:
+    kind: function
+    description: Assert logical implication (premise => conclusion).
   SmtQuery.to_smtlib2:
     kind: function
-    description: "Serializes the query to SMT-LIB2 format with set-logic, declarations, assertions, and check-sat"
-    type_constraints:
-      - "equals(param(0), Self)"
-      - "equals(return, String)"
-    ensures:
-      - Generates valid SMT-LIB2 format
-      - Includes set-logic, declarations, assertions, check-sat
-
+    description: Render the query as a complete SMT-LIB2 string.
   SmtQuery.check_sat:
     kind: function
-    description: "Invokes z3 as subprocess with the query and parses the result"
-    type_constraints:
-      - "equals(param(0), Self)"
-      - "equals(return, SmtResult)"
-    ensures:
-      - Returns Error when z3 not available
-      - Returns Sat, Unsat, or Unknown on success
-
+    description: Submit the query to z3 and return the satisfiability result.
   solver_available:
     kind: function
-    description: "Checks whether the z3 binary is accessible on PATH"
-    type_constraints:
-      - "equals(return, bool)"
-    ensures:
-      - Checks if z3 binary is on PATH
-      - Never panics
-
+    description: Check whether the z3 solver binary is available on the system.
   check_state_ownership_consistency:
     kind: function
-    description: "Encodes cross-module state ownership as mutual-exclusion SMT constraints and checks for conflicts"
-    type_constraints:
-      - "fallible(return)"
-    ensures:
-      - Encodes mutual exclusion as SMT constraints
-      - Returns Ok when no conflicts
-      - Returns Err with descriptive message on conflict
-      - Returns Err when z3 not available
-
+    description: Verify that a set of state-ownership claims are mutually exclusive using SMT.
   check_numeric_constraints:
     kind: function
-    description: "Checks satisfiability of integer constraints with declared bounds"
-    type_constraints:
-      - "equals(return, SmtResult)"
-    ensures:
-      - Declares integer variables with bounds
-      - Returns Sat when constraints are satisfiable
-      - Returns Unsat when constraints are contradictory
-
+    description: Check satisfiability of a set of numeric bound constraints.
   check_implication:
     kind: function
-    description: "Checks logical implication validity by negating the conclusion and checking for unsatisfiability"
-    type_constraints:
-      - "equals(return, SmtResult)"
-    ensures:
-      - Negates conclusion to check validity
-      - Returns Unsat when implication holds (valid)
-      - Returns Sat when implication does not hold
-
-# SmtQuery builder protocol (uses qualified method names)
-protocol:
-  states: [empty, building, solved]
-  initial: empty
-  terminal: [solved]
-  transitions:
-    - { from: empty, call: SmtQuery.declare_int, to: building }
-    - { from: empty, call: SmtQuery.declare_bool, to: building }
-    - { from: building, call: SmtQuery.declare_int, to: building }
-    - { from: building, call: SmtQuery.declare_bool, to: building }
-    - { from: building, call: SmtQuery.assert_raw, to: building }
-    - { from: building, call: SmtQuery.assert_eq, to: building }
-    - { from: building, call: SmtQuery.assert_ge, to: building }
-    - { from: building, call: SmtQuery.assert_gt, to: building }
-    - { from: building, call: SmtQuery.assert_ne, to: building }
-    - { from: building, call: SmtQuery.assert_implies, to: building }
-    - { from: building, call: SmtQuery.check_sat, to: solved }
-    - { from: building, call: SmtQuery.to_smtlib2, to: building }
-  balanced_pairs: []
-
-external_deps:
-  - sha2
-
-forbidden_deps:
-  - clap
-  - colored
-  - syn
-
-invariants:
-  - "Degrades gracefully when z3 is not installed"
-  - "No unsafe code"
-  - "z3 subprocess has 5-second timeout"
-  - "SMT-LIB2 output always includes (set-logic ALL) and (check-sat)"
+    description: Verify whether premises logically imply a conclusion by checking negation unsatisfiability.
+owns_state:
+  - SmtResult
+  - SmtQuery

@@ -1,137 +1,53 @@
-# Spec Checker - Type formula DSL module (parser + evaluator)
-# Inherits: language=rust, context=core, stability=stable (root)
-
 module: type_formula
-description: "Type formula DSL: parser and evaluator for type-level predicates and logical connectives over type structure"
+description: Type formula DSL — parser and evaluator for abstract predicates over types (structural queries, trait bounds, logical connectives).
+language: rust
 source_path: src/type_formula.rs
-
+source_hash: 798752f4161d88cd
 layer: domain
-
+forbidden_deps:
+  - src/main.rs
+  - src/cli.rs
+  - src/ai_enrichment.rs
+  - src/spec.rs
+  - src/rules.rs
+  - src/smt.rs
+  - src/extractors
 exposes:
-  TypeExpr:
-    kind: type
-    description: "AST for type expressions: Self, literals, field/param/return access, constructors, and type combinators"
-    type_constraints:
-      - "is_sum(Self)"
-      - "cloneable"
-      - "has_variant(Self, Self_)"
-      - "has_variant(Self, Literal)"
-      - "has_variant(Self, Field)"
-      - "has_variant(Self, Param)"
-      - "has_variant(Self, Return)"
-      - "has_variant(Self, Con)"
-      - "has_variant(Self, Arg)"
-      - "has_variant(Self, Apply)"
-      - "has_variant(Self, Function)"
-      - "has_variant(Self, Domain)"
-      - "has_variant(Self, Codomain)"
-      - "has_variant(Self, Sum)"
-      - "has_variant(Self, Product)"
-
-  Predicate:
-    kind: type
-    description: "Type predicates that can be evaluated against extracted type information"
-    type_constraints:
-      - "is_sum(Self)"
-      - "cloneable"
-      - "has_variant(Self, Equals)"
-      - "has_variant(Self, Matches)"
-      - "has_variant(Self, IsSubtype)"
-      - "has_variant(Self, HasField)"
-      - "has_variant(Self, HasVariant)"
-      - "has_variant(Self, Fallible)"
-      - "has_variant(Self, Cloneable)"
-      - "has_variant(Self, Serializable)"
-
-  Formula:
-    kind: type
-    description: "Logical formula combining predicates with And, Or, Not, and Implies connectives"
-    type_constraints:
-      - "is_sum(Self)"
-      - "cloneable"
-      - "has_variant(Self, Pred)"
-      - "has_variant(Self, And)"
-      - "has_variant(Self, Or)"
-      - "has_variant(Self, Not)"
-      - "has_variant(Self, Implies)"
-
   ParamRef:
     kind: type
-    description: "Reference to a function parameter by positional index or by name"
-    type_constraints:
-      - "is_sum(Self)"
-      - "cloneable"
-      - "has_variant(Self, Index)"
-      - "has_variant(Self, Name)"
-
+    description: Reference to a function parameter by index or name.
+  TypeExpr:
+    kind: type
+    description: AST node for type-level expressions (field, param, con, arg, apply, function, sum, product, etc.).
+  Predicate:
+    kind: type
+    description: A predicate over types — equality, pattern match, subtype check, trait bound, or structural query.
+  Formula:
+    kind: type
+    description: Logical formula combining predicates with and/or/not/implies connectives.
+  TypeEvalContext:
+    kind: type
+    description: Evaluation context providing the current type, function, and project-wide type/function definitions.
   ParseError:
     kind: type
-    description: "Error from formula parsing, with a human-readable message and character position"
-    type_constraints:
-      - "is_product(Self)"
-      - "cloneable"
-      - "has_field(Self, message)"
-      - "has_field(Self, position)"
-    ensures:
-      - IsSubtype Display
-
+    description: Error returned when a formula string fails to parse.
   EvalError:
     kind: type
-    description: "Error from formula evaluation when type context is missing or a predicate cannot be resolved"
-    type_constraints:
-      - "is_product(Self)"
-      - "cloneable"
-      - "has_field(Self, message)"
-    ensures:
-      - IsSubtype Display
-
+    description: Error returned when formula evaluation fails at runtime.
   parse_formula:
     kind: function
-    description: "Parses a type formula string into a Formula AST using recursive descent"
-    type_constraints:
-      - "equals(param(input), str)"
-      - "fallible(return)"
-    ensures:
-      - Parses formula string into Formula AST
-      - Returns ParseError with position on malformed input
-      - Rejects trailing unparsed tokens
-
+    description: Parse a type-formula string into a Formula AST.
   evaluate_formula:
     kind: function
-    description: "Evaluates a Formula against a type evaluation context, returning true/false or an EvalError"
-    type_constraints:
-      - "equals(param(formula), Formula)"
-      - "fallible(return)"
-    ensures:
-      - Short-circuits AND on first false
-      - Short-circuits OR on first true
-      - Implies returns true when premise is false
-
+    description: Evaluate a Formula AST against a TypeEvalContext, returning true/false or an error.
   parse_type_repr_from_str:
     kind: function
-    description: "Parses a type string into a TypeRepr AST, handling references, slices, arrays, tuples, fn pointers, and generics"
-    type_constraints:
-      - "equals(param(s), str)"
-      - "fallible(return)"
-    ensures:
-      - Handles references, slices, arrays, tuples, fn pointers, generics
-      - Returns Unit for "()"
-      - Returns Infer for "_"
-
-depends_on:
-  - src/types.rs
-
-external_deps:
-  - regex         # for matches() predicate pattern matching
-
-forbidden_deps:
-  - syn           # formula parser is hand-written, not syn-based
-  - serde         # formulas are not serialized
-  - anyhow        # uses custom ParseError/EvalError
-
-invariants:
-  - "Parser is recursive descent with proper nesting"
-  - "Type literal tokenization respects balanced <> () [] brackets"
-  - "Unary predicates without arguments default to Self"
-  - "Self evaluates to Named('Self') when no type context is available"
-  - "NoUnsafe is optimistic (returns true) until body analysis is implemented"
+    description: Parse a type representation string into a TypeRepr value.
+owns_state:
+  - ParamRef
+  - TypeExpr
+  - Predicate
+  - Formula
+  - TypeEvalContext
+  - ParseError
+  - EvalError

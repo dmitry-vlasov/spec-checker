@@ -1,41 +1,19 @@
-# Spec Checker - Rust Extractor
-# Inherits: language=rust, context=core, stability=stable (root)
-# Inherits: layer=infrastructure, forbidden_deps=[clap, colored] (extractors)
-
 module: rust
-description: "Extracts module structure from Rust source files using syn AST parsing"
+description: "Rust source extractor using syn AST parsing"
+language: rust
 source_path: src/extractors/rust.rs
-
+source_hash: 1a1d180464b72a61
+layer: infrastructure
 exposes:
   RustExtractor:
     kind: type
-    description: "Rust-specific extractor using syn for proper AST parsing of functions, types, and imports"
-    type_constraints:
-      - "is_product(Self)"
-
+    description: "Extracts public types, functions, and signatures from Rust source files"
   RustExtractor.new:
     kind: function
     description: "Creates a new RustExtractor instance"
-    type_constraints:
-      - "equals(return, Self)"
-
-depends_on: []
-
-external_deps:
-  - anyhow
-  - syn           # Rust AST parsing
-  - quote         # token stream handling
-
 forbidden_deps:
-  - regex         # use syn for proper parsing
-  - serde_json    # Solidity-specific
-
-invariants:
-  - "Uses syn for proper AST parsing (not regex)"
-  - "Extracts: functions, structs, enums, traits, impl methods, use statements"
-  - "Qualifies method names with parent type via dot delimiter (Type.method)"
-  - "Flattens nested use trees: use a::{b::{c, d}} -> [a::b::c, a::b::d]"
-  - "Filters test modules (#[cfg(test)])"
-  - "Filters internal imports (crate::, super::)"
-  - "Records trait implementations and derive macros per type"
-  - "No unsafe code"
+  - checker
+  - ai_init
+  - ai_refine
+  - solidity
+  - flow9

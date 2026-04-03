@@ -1,38 +1,19 @@
-# Spec Checker - Flow9 Extractor
-# Inherits: language=rust, context=core, stability=stable (root)
-# Inherits: layer=infrastructure, forbidden_deps=[clap, colored] (extractors)
-
 module: flow9
-description: "Extracts module structure from Flow9 source files using a recursive descent parser"
+description: "Flow9 language extractor wiring the parser and AST-to-TypeInfo conversion"
+language: rust
 source_path: src/extractors/flow9.rs
-
+source_hash: 8b95e0854c120cf3
+layer: infrastructure
 exposes:
   Flow9Extractor:
     kind: type
-    description: "Flow9-specific extractor using a hand-written recursive descent parser for imports, types, and functions"
-    type_constraints:
-      - "is_product(Self)"
-
+    description: "Extracts public types, functions, and imports from Flow9 source files"
   Flow9Extractor.new:
     kind: function
     description: "Creates a new Flow9Extractor instance"
-    type_constraints:
-      - "equals(return, Self)"
-
-depends_on: []
-
-external_deps:
-  - anyhow
-
 forbidden_deps:
-  - syn           # Rust-specific
-  - serde_json    # Solidity-specific
-  - regex         # uses recursive descent parser instead
-
-invariants:
-  - "Uses recursive descent parser (not regex) for Flow9 syntax"
-  - "Strips comments before parsing"
-  - "Captures function bodies as strings"
-  - "Detects export blocks and marks exported names"
-  - "Handles: imports, exports, forbids, unions, structs, functions, natives, variables"
-  - "No unsafe code"
+  - checker
+  - ai_init
+  - ai_refine
+  - rust
+  - solidity

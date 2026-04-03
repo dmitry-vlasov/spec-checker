@@ -1,0 +1,30 @@
+module: flow9_ast
+description: "AST node types modeling parsed Flow9 source modules"
+language: rust
+source_path: src/extractors/flow9_ast.rs
+source_hash: 46bc08b6256a80a5
+layer: domain
+exposes:
+  Flow9Module:
+    kind: type
+    description: "Top-level AST node representing a parsed Flow9 module with imports and declarations"
+  Decl:
+    kind: type
+    description: "A top-level declaration: function, struct, union, or type alias"
+  Flow9Type:
+    kind: type
+    description: "Type representation in Flow9 syntax"
+  FunArg:
+    kind: type
+    description: "A function argument with name and type"
+  ArgType:
+    kind: type
+    description: "Argument passing convention (value, mutable reference, etc.)"
+  TypeName:
+    kind: type
+    description: "A named type reference with optional type parameters"
+forbidden_deps:
+  - checker
+  - ai_init
+  - ai_refine
+  - types       # Flow9 AST is self-contained

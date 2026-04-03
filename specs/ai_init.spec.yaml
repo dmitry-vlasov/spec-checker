@@ -1,0 +1,42 @@
+module: ai_init
+description: "AI-assisted spec initialization: enriches mechanical extraction skeletons with descriptions, API curation, forbidden deps, and layer via LLM."
+language: rust
+source_path: src/ai_init.rs
+source_hash: 5e3272e9990e96e1
+layer: application
+exposes:
+  ai_enrich_spec:
+    kind: function
+    description: "Call the LLM to enrich a lean spec skeleton with description, curated API, forbidden deps, and layer."
+  apply_enrichment:
+    kind: function
+    description: "Apply AI-generated enrichments to a module spec, replacing exposes with curated API entities."
+  summarize_extracted:
+    kind: function
+    description: "Build a budget-aware compact summary of extracted module metadata for LLM context windows."
+  extract_internal_deps:
+    kind: function
+    description: "Scan source code for crate-internal use/reference patterns and return dependency module names."
+  toposort_files:
+    kind: function
+    description: "Topologically sort files by internal dependencies so specs are processed deps-first."
+  format_dep_context:
+    kind: function
+    description: "Format already-generated spec enrichments as compact context for the LLM prompt."
+  SpecEnrichment:
+    kind: type
+    description: "AI-generated enrichment payload: description, curated API entities, forbidden deps, and layer."
+  ApiEntity:
+    kind: type
+    description: "A curated public API entity with name and description."
+  ForbiddenDep:
+    kind: type
+    description: "A suggested forbidden dependency with its architectural reason."
+forbidden_deps:
+  - main
+  - checker
+  - ai_refine
+owns_state:
+  - SpecEnrichment
+  - ApiEntity
+  - ForbiddenDep

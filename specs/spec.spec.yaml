@@ -1,259 +1,83 @@
-# Spec Checker - Spec module (data structures)
-# Inherits: language=rust, context=core, stability=stable (root)
-
 module: spec
-description: "Core data structures for module specs, defaults resolution, layer/stability models, and protocol definitions"
+description: Core data model for module, subsystem, and layer specifications — the schema that all other modules produce or consume.
+language: rust
 source_path: src/spec.rs
-
+source_hash: 463db0c171e8f628
 layer: domain
-
+forbidden_deps:
+  - src/main.rs
+  - src/cli.rs
+  - src/ai_enrichment.rs
+  - src/smt.rs
 exposes:
   ModuleSpec:
     kind: type
-    description: "Complete specification for a single source module: exposed entities, dependencies, layers, invariants, and protocols"
-    type_constraints:
-      - "is_product(Self)"
-      - "serializable"
-      - "cloneable"
-      - "has_field(Self, module)"
-      - "has_field(Self, language)"
-      - "has_field(Self, source_path)"
-      - "has_field(Self, exposes)"
-      - "has_field(Self, depends_on)"
-      - "has_field(Self, forbidden_deps)"
-      - "has_field(Self, external_deps)"
-      - "has_field(Self, forbidden_external)"
-      - "has_field(Self, layer)"
-      - "has_field(Self, context)"
-      - "has_field(Self, stability)"
-      - "has_field(Self, invariants)"
-      - "has_field(Self, emits)"
-      - "has_field(Self, subscribes)"
-      - "has_field(Self, owns_state)"
-      - "has_field(Self, reads_state)"
-      - "has_field(Self, modifies)"
-      - "has_field(Self, callable_by)"
-      - "has_field(Self, roles)"
-      - "has_field(Self, protocol)"
-
-  ExposeSpec:
-    kind: type
-    description: "Specification for a single exposed entity (function or type) within a module"
-    type_constraints:
-      - "is_product(Self)"
-      - "serializable"
-      - "cloneable"
-      - "has_field(Self, kind)"
-      - "has_field(Self, type_constraints)"
-      - "has_field(Self, requires)"
-      - "has_field(Self, ensures)"
-      - "has_field(Self, modifies)"
-      - "has_field(Self, emits)"
-      - "has_field(Self, callable_by)"
-      - "has_field(Self, visibility)"
-
-  SpecDefaults:
-    kind: type
-    description: "Directory-level defaults that cascade from root to leaf, with scalar override and list merge semantics"
-    type_constraints:
-      - "is_product(Self)"
-      - "serializable"
-      - "cloneable"
-      - "has_field(Self, language)"
-      - "has_field(Self, layer)"
-      - "has_field(Self, context)"
-      - "has_field(Self, stability)"
-      - "has_field(Self, forbidden_deps)"
-      - "has_field(Self, external_deps)"
-      - "has_field(Self, forbidden_external)"
-
-  Layer:
-    kind: type
-    description: "A named architectural layer (always lowercased) used for dependency direction enforcement"
-    type_constraints:
-      - "serializable"
-      - "cloneable"
-
-  Stability:
-    kind: type
-    description: "Module stability level controlling allowed dependency direction: Stable > Normal > Volatile"
-    type_constraints:
-      - "is_sum(Self)"
-      - "serializable"
-      - "cloneable"
-      - "has_variant(Self, Stable)"
-      - "has_variant(Self, Normal)"
-      - "has_variant(Self, Volatile)"
-
-  LayerConfig:
-    kind: type
-    description: "Configuration of allowed layer dependencies, supporting built-in 4-layer, linear, or DAG models"
-    type_constraints:
-      - "is_product(Self)"
-      - "cloneable"
-      - "has_field(Self, allowed_deps)"
-
-  ProtocolSpec:
-    kind: type
-    description: "State machine specification for lifecycle or call-sequence protocols on a module's API"
-    type_constraints:
-      - "is_product(Self)"
-      - "serializable"
-      - "cloneable"
-      - "has_field(Self, states)"
-      - "has_field(Self, initial)"
-      - "has_field(Self, terminal)"
-      - "has_field(Self, transitions)"
-      - "has_field(Self, balanced_pairs)"
-
-  Transition:
-    kind: type
-    description: "A single state machine transition: from-state, triggering call, to-state"
-    type_constraints:
-      - "is_product(Self)"
-      - "serializable"
-      - "cloneable"
-      - "has_field(Self, from)"
-      - "has_field(Self, call)"
-      - "has_field(Self, to)"
-
-  SubsystemSpec:
-    kind: type
-    description: "Specification for a subsystem grouping multiple modules with shared invariants and dependency constraints"
-    type_constraints:
-      - "is_product(Self)"
-      - "serializable"
-      - "has_field(Self, subsystem)"
-      - "has_field(Self, modules)"
-      - "has_field(Self, exposes)"
-      - "has_field(Self, invariants)"
-      - "has_field(Self, depends_on)"
-      - "has_field(Self, forbidden_deps)"
-
-  SubsystemExposeSpec:
-    kind: type
-    description: "A subsystem-level exposed interface that delegates to a specific module function"
-    type_constraints:
-      - "is_product(Self)"
-      - "serializable"
-      - "has_field(Self, delegates_to)"
-      - "has_field(Self, requires)"
-      - "has_field(Self, ensures)"
-
-  ModuleSpec.from_extracted:
-    kind: function
-    description: "Converts an ExtractedModule into a ModuleSpec, populating exposes, emits, state, and protocol"
-    type_constraints:
-      - "equals(param(extracted), ExtractedModule)"
-      - "equals(return, Self)"
-    ensures:
-      - Creates ModuleSpec from extracted implementation
-      - Populates exposes from public_functions and type_definitions
-      - Populates emits from events
-      - Populates owns_state from state_variables
-      - Detects protocol patterns from function names
-
+    description: Central YAML-backed specification for a single source module, carrying layer, dependencies, contracts, and protocol.
   ModuleSpec.apply_defaults:
     kind: function
-    description: "Applies directory-level defaults to unset fields in this spec, merging lists and overriding scalars"
-    ensures:
-      - Fills in missing scalar fields from defaults
-      - Merges list fields (union) from defaults
-      - Never overwrites explicitly set fields
-
-  SpecDefaults.merge:
+    description: Merge directory-level SpecDefaults into this module spec (inheriting layer, context, stability, etc.).
+  ModuleSpec.from_extracted:
     kind: function
-    description: "Merges parent and child defaults: child scalars win, list fields are unioned"
-    type_constraints:
-      - "equals(param(0), Self)"
-      - "equals(return, SpecDefaults)"
-    ensures:
-      - "Scalars: child wins if set"
-      - "Lists: union of both"
-
-  Layer.new:
-    kind: function
-    description: "Creates a new Layer, lowercasing the input name for case-insensitive comparison"
-    type_constraints:
-      - "equals(param(name), str)"
-      - "equals(return, Self)"
-    ensures:
-      - Lowercases the input name
-
+    description: Construct a skeleton ModuleSpec from an ExtractedModule produced by a language extractor.
+  SubsystemSpec:
+    kind: type
+    description: Specification for a subsystem grouping multiple modules with its own interface and invariants.
+  SubsystemExposeSpec:
+    kind: type
+    description: An entry in a subsystem's public interface, optionally delegating to a module function.
+  ExposeSpec:
+    kind: type
+    description: Contract for a single publicly exposed entity (function or type), including pre/postconditions and type constraints.
+  ProtocolSpec:
+    kind: type
+    description: State-machine protocol defining valid call sequences on a module.
+  Transition:
+    kind: type
+    description: A single state transition in a ProtocolSpec (from, call, to).
+  Layer:
+    kind: type
+    description: Architectural layer tag (a lowercased string wrapper) for vertical stratification.
+  LayerConfig:
+    kind: type
+    description: DAG of allowed inter-layer dependencies used by rule evaluation.
   LayerConfig.builtin:
     kind: function
-    description: "Returns the default 4-layer model: infrastructure < domain < application < interface"
-    type_constraints:
-      - "equals(return, Self)"
-    ensures:
-      - Returns 4-layer model (infrastructure/domain/application/interface)
-
+    description: Return the default four-layer model (infrastructure, domain, application, interface).
   LayerConfig.from_linear:
     kind: function
-    description: "Builds a layer config from an ordered list where each layer may depend on all layers below it"
-    type_constraints:
-      - "equals(return, Self)"
-    ensures:
-      - Each layer can depend on all layers below it
-
+    description: Build a LayerConfig from an ordered list where each layer may depend on all layers below it.
   LayerConfig.from_dag:
     kind: function
-    description: "Builds a layer config from an explicit DAG where each layer lists its allowed dependencies"
-    type_constraints:
-      - "equals(return, Self)"
-    ensures:
-      - Each layer lists its allowed dependencies explicitly
-
+    description: Build a LayerConfig from an explicit mapping of layer to allowed dependencies.
   LayerConfig.can_depend_on:
     kind: function
-    description: "Checks whether one layer is allowed to depend on another according to the configured model"
-    type_constraints:
-      - "equals(param(0), Self)"
-      - "equals(return, bool)"
-    ensures:
-      - Same layer always returns true
-      - Unknown layers allowed by default
-
+    description: Check whether one layer is allowed to depend on another according to this config.
+  Stability:
+    kind: type
+    description: Change-frequency tag (stable/normal/volatile) governing stability-direction rules.
   Stability.can_depend_on:
     kind: function
-    description: "Checks whether a module at this stability level may depend on a module at the target stability"
-    type_constraints:
-      - "equals(param(0), Self)"
-      - "equals(return, bool)"
-    ensures:
-      - Stable can only depend on Stable
-      - Normal cannot depend on Volatile
-      - Volatile can depend on anything
-
+    description: Check whether a module of this stability level may depend on a module of another level.
+  SpecDefaults:
+    kind: type
+    description: Directory-level default values inherited by specs via _defaults.yaml files.
+  SpecDefaults.merge:
+    kind: function
+    description: Overlay a child SpecDefaults on top of this parent, with scalar-override and list-union semantics.
   resolve_defaults:
     kind: function
-    description: "Walks from root to spec directory, loading and merging _defaults.yaml at each level"
-    type_constraints:
-      - "equals(param(spec_dir), Path)"
-      - "equals(param(root_dir), Path)"
-      - "equals(return, SpecDefaults)"
-    ensures:
-      - Walks directory chain from root_dir to spec_dir
-      - Loads _defaults.yaml at each level
-      - Merges defaults (parent first, child overlays)
-
-depends_on:
-  - src/extractors/mod.rs    # Uses ExtractedModule type
-
-external_deps:
-  - serde
-  - serde_yaml
-  - sha2
-
-forbidden_deps:
-  - syn           # belongs in extractors
-  - regex         # belongs in extractors
-
-invariants:
-  - "Layer dependencies are acyclic"
-  - "Stable cannot depend on Normal or Volatile"
-  - "Normal cannot depend on Volatile"
-  - "apply_defaults never overwrites explicitly set fields"
-  - "List fields merge (union), scalar fields override"
-  - "No unsafe code"
-  - "detect_protocol returns None when no patterns found"
+    description: Walk the directory tree from a spec file up to the root, merging _defaults.yaml at each level.
+  compute_source_hash:
+    kind: function
+    description: Compute a truncated SHA-256 hash of a source file for staleness detection.
+owns_state:
+  - SpecDefaults
+  - ModuleSpec
+  - ProtocolSpec
+  - Transition
+  - SubsystemSpec
+  - SubsystemExposeSpec
+  - ExposeSpec
+  - Layer
+  - LayerConfig
+  - Stability

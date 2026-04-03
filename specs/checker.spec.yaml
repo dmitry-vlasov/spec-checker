@@ -1,185 +1,69 @@
-# Spec Checker - Checker module
-# Inherits: language=rust, context=core, stability=stable (root)
-
 module: checker
-description: "Core verification orchestrator: runs structural, dependency, type-formula, and SMT checks against specs"
+description: >-
+  Three-tier verification engine that checks source code against module,
+  composition, and subsystem specs using syntactic, rules-engine, type-formula,
+  and SMT strategies.
+language: rust
 source_path: src/checker.rs
-
-layer: application       # Orchestrates domain + infrastructure
-
+source_hash: 3e7121fe481054ce
+layer: domain
 exposes:
   ConstraintKind:
-    kind: type
-    description: "Category of a spec constraint: Structural, Dependency, Architectural, Event, TypeConstraint, or Protocol"
-    type_constraints:
-      - "is_sum(Self)"
-      - "has_variant(Self, Structural)"
-      - "has_variant(Self, Dependency)"
-      - "has_variant(Self, Architectural)"
-      - "has_variant(Self, Event)"
-      - "has_variant(Self, TypeConstraint)"
-      - "has_variant(Self, Protocol)"
-
-  VerificationTier:
-    kind: type
-    description: "The verification method that decided a constraint result: Syntactic, RulesEngine, TypeFormula, or Smt"
-    type_constraints:
-      - "is_sum(Self)"
-      - "has_variant(Self, Syntactic)"
-      - "has_variant(Self, RulesEngine)"
-      - "has_variant(Self, TypeFormula)"
-      - "has_variant(Self, Smt)"
-
+    kind: variable
+    description: Classification of a spec constraint (structural, dependency, architectural, event, type-constraint, protocol).
   ConstraintSeverity:
-    kind: type
-    description: "Severity of a constraint result: Error or Warning"
-    type_constraints:
-      - "is_sum(Self)"
-      - "has_variant(Self, Error)"
-      - "has_variant(Self, Warning)"
-
+    kind: variable
+    description: Error or warning severity for a constraint check result.
+  VerificationTier:
+    kind: variable
+    description: Which verification strategy decided a result (syntactic, rules-engine, type-formula, SMT).
   ConstraintResult:
-    kind: type
-    description: "A single constraint check outcome tagged with kind, verification tier, severity, and message"
-    type_constraints:
-      - "is_product(Self)"
-      - "cloneable"
-      - "has_field(Self, kind)"
-      - "has_field(Self, tier)"
-      - "has_field(Self, severity)"
-      - "has_field(Self, message)"
-
+    kind: variable
+    description: Single constraint check outcome with kind, tier, severity, and message.
   CheckResult:
-    kind: type
-    description: "Aggregated check results: lists of error/warning strings plus detailed constraint results"
-    type_constraints:
-      - "is_product(Self)"
-      - "has_field(Self, errors)"
-      - "has_field(Self, warnings)"
-      - "has_field(Self, constraint_results)"
-      - "equals(con(field(errors)), Vec)"
-      - "equals(con(field(warnings)), Vec)"
-
+    kind: variable
+    description: Aggregated result of checking a spec, containing errors, warnings, and typed constraint results.
+  CheckResult.warning:
+    kind: function
+    description: Record a warning message.
+  CheckResult.error:
+    kind: function
+    description: Record an error message.
   SpecChecker:
-    kind: type
-    description: "Stateful checker holding source root, spec map, rules, and layer config for running verifications"
-    type_constraints:
-      - "is_product(Self)"
-      - "has_field(Self, source_root)"
-      - "has_field(Self, spec_map)"
-      - "has_field(Self, rules)"
-      - "has_field(Self, layer_config)"
-
+    kind: variable
+    description: Main checker struct holding source root, spec map, rules, layer config, and external specs.
   SpecChecker.new:
     kind: function
-    description: "Creates a checker initialized with built-in rules and the given source root"
-    type_constraints:
-      - "equals(param(source_root), PathBuf)"
-      - "equals(return, Self)"
-    ensures:
-      - Creates checker with default built-in rules
-
+    description: Create a checker rooted at the given source directory with built-in rules.
   SpecChecker.with_specs:
     kind: function
-    description: "Loads a set of specs into the checker's map for cross-module verification"
-    type_constraints:
-      - "equals(param(0), Self)"
-      - "equals(return, Self)"
-    ensures:
-      - Builds spec map for cross-module checking
-
+    description: Load module specs into the checker for cross-module lookups.
   SpecChecker.with_rules_config:
     kind: function
-    description: "Applies rules configuration: disables built-ins, adds custom rules, sets custom layer config"
-    type_constraints:
-      - "equals(param(0), Self)"
-      - "equals(return, Self)"
-    ensures:
-      - Removes disabled built-in rules
-      - Adds custom rules from config
-      - Applies custom layer config if provided
-
+    description: Apply custom rules configuration, disabling/adding rules and layer definitions.
+  SpecChecker.with_dependency_graph:
+    kind: function
+    description: Attach resolved cross-project dependency specs for boundary checks.
   SpecChecker.check:
     kind: function
-    description: "Runs all structural, dependency, architectural, type-formula, and protocol checks against a single spec"
-    type_constraints:
-      - "equals(param(0), Self)"
-      - "equals(param(spec), ModuleSpec)"
-      - "fallible(return)"
-      - "equals(con(return), Result)"
-    requires:
-      - spec has valid module name
-    ensures:
-      - Returns errors for missing exposed functions
-      - Returns errors for exposed internal functions
-      - Returns errors for forbidden dependencies
-      - Returns errors for architectural rule violations
-      - Returns warnings for unlisted dependencies
-      - All results tagged with ConstraintKind and VerificationTier
-
+    description: Check a single module spec against its source file.
   SpecChecker.check_composition:
     kind: function
-    description: "Verifies cross-module properties: event subscribe/emit matching, contract compatibility, and state ownership"
-    type_constraints:
-      - "equals(param(0), Self)"
-      - "equals(return, CheckResult)"
-    ensures:
-      - Checks event subscribe/emit matching across modules
-      - Checks contract compatibility at dependency boundaries
-      - Checks cross-module protocol compatibility
-      - Runs SMT state ownership consistency when z3 available
-
+    description: Check cross-module composition constraints (events, interfaces, contracts, state ownership).
   SpecChecker.check_subsystem:
     kind: function
-    description: "Validates a subsystem spec: module existence, delegation targets, and dependency boundaries"
-    type_constraints:
-      - "equals(param(0), Self)"
-      - "equals(return, CheckResult)"
-    ensures:
-      - Verifies all listed modules exist
-      - Checks delegated interface targets exist
-      - Warns about dependencies outside subsystem
-      - Enforces forbidden subsystem dependencies
-
-# Builder protocol: new → configure → check
-# Uses qualified method names matching what the Rust extractor produces
-protocol:
-  states: [created, configured, checking]
-  initial: created
-  transitions:
-    - { from: created, call: SpecChecker.with_specs, to: configured }
-    - { from: created, call: SpecChecker.with_rules_config, to: configured }
-    - { from: configured, call: SpecChecker.with_specs, to: configured }
-    - { from: configured, call: SpecChecker.with_rules_config, to: configured }
-    - { from: configured, call: SpecChecker.check, to: checking }
-    - { from: configured, call: SpecChecker.check_composition, to: checking }
-    - { from: configured, call: SpecChecker.check_subsystem, to: checking }
-    - { from: checking, call: SpecChecker.check, to: checking }
-    - { from: checking, call: SpecChecker.check_composition, to: checking }
-    - { from: checking, call: SpecChecker.check_subsystem, to: checking }
-  balanced_pairs: []
-
-depends_on:
-  - src/extractors/mod.rs
-  - src/spec.rs
-  - src/rules.rs
-  - src/type_formula.rs
-  - src/smt.rs
-  - src/behavioral.rs
-
-external_deps:
-  - anyhow
-  - tempfile
-
+    description: Check a subsystem spec against its constituent module specs.
+  SpecChecker.check_cross_project_boundaries:
+    kind: function
+    description: Verify cross-project dependency references respect public surface constraints.
 forbidden_deps:
-  - clap          # CLI concerns belong in main
-  - colored       # output formatting belongs in main
-  - syn           # AST parsing belongs in extractors
-
-invariants:
-  - "Errors are always more severe than warnings"
-  - "check() never panics, returns Result"
-  - "All built-in rules can be disabled via config"
-  - "Every error/warning is also recorded in constraint_results"
-  - "No unsafe code"
-  - "All constraint checks run regardless of earlier failures"
+  - ai_init
+  - ai_refine
+  - main
+owns_state:
+  - ConstraintKind
+  - VerificationTier
+  - ConstraintSeverity
+  - ConstraintResult
+  - CheckResult
+  - SpecChecker

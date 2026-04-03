@@ -1,127 +1,51 @@
-# Spec Checker - Rules module (DSL engine)
-# Inherits: language=rust, context=core, stability=stable (root)
-
 module: rules
-description: "DSL engine for custom and built-in architectural rules, evaluated against module dependency pairs"
+description: Architectural rule engine that evaluates dependency constraints (layer direction, context isolation, stability) against module specs.
+language: rust
 source_path: src/rules.rs
-
+source_hash: 624e1c21ff551cb2
 layer: domain
-
+forbidden_deps:
+  - src/main.rs
+  - src/cli.rs
+  - src/ai_enrichment.rs
+  - src/smt.rs
+  - src/extractors
 exposes:
   Rule:
     kind: type
-    description: "A named architectural rule with when/require conditions and a severity level"
-    type_constraints:
-      - "is_product(Self)"
-      - "serializable"
-      - "cloneable"
-      - "has_field(Self, name)"
-      - "has_field(Self, description)"
-      - "has_field(Self, when)"
-      - "has_field(Self, require)"
-      - "has_field(Self, severity)"
-
+    description: A named architectural rule with a when-condition and a require-expression evaluated against module pairs.
   Severity:
     kind: type
-    description: "Rule violation severity: Error (blocks) or Warning (advisory)"
-    type_constraints:
-      - "is_sum(Self)"
-      - "serializable"
-      - "cloneable"
-      - "has_variant(Self, Error)"
-      - "has_variant(Self, Warning)"
-
+    description: Rule violation severity — error or warning.
   RulesConfig:
     kind: type
-    description: "Project-level rules configuration: custom rules, disabled built-ins, and optional custom layer definitions"
-    type_constraints:
-      - "is_product(Self)"
-      - "serializable"
-      - "cloneable"
-      - "has_field(Self, rules)"
-      - "has_field(Self, disable_builtin)"
-      - "has_field(Self, layers)"
-
-  RuleViolation:
-    kind: type
-    description: "A detected rule violation with the rule name, descriptive message, and severity"
-    type_constraints:
-      - "is_product(Self)"
-      - "has_field(Self, rule_name)"
-      - "has_field(Self, message)"
-      - "has_field(Self, severity)"
-
-  EvalContext:
-    kind: type
-    description: "Evaluation context for rule expressions, binding source/target modules and layer config"
-    type_constraints:
-      - "is_product(Self)"
-      - "has_field(Self, source)"
-      - "has_field(Self, target)"
-      - "has_field(Self, layer_config)"
-
+    description: Project-level rules configuration including custom rules, disabled built-ins, and optional custom layers.
   LayersInput:
     kind: type
-    description: "Custom layer config input supporting linear list or explicit DAG format"
-    type_constraints:
-      - "is_sum(Self)"
-      - "serializable"
-      - "cloneable"
-      - "has_variant(Self, Linear)"
-      - "has_variant(Self, Dag)"
-
+    description: User-facing layer config input supporting linear list or explicit DAG formats.
+  LayersInput.to_layer_config:
+    kind: function
+    description: Convert a LayersInput into a LayerConfig usable by the rule engine.
   builtin_rules:
     kind: function
-    description: "Returns the three built-in rules: layer-direction, context-isolation, stability-direction"
-    type_constraints:
-      - "equals(con(return), Vec)"
-    ensures:
-      - Returns layer-direction rule
-      - Returns context-isolation rule
-      - Returns stability-direction rule
-      - Returns exactly 3 rules
-
+    description: Return the three default architectural rules (layer-direction, context-isolation, stability-direction).
   check_dependency:
     kind: function
-    description: "Evaluates all rules against a source→target dependency pair, collecting violations"
-    type_constraints:
-      - "equals(param(source), ModuleSpec)"
-      - "equals(param(target), ModuleSpec)"
-      - "equals(con(return), Vec)"
-    ensures:
-      - Evaluates each rule's 'when' condition
-      - For matching rules, evaluates 'require' condition
-      - Returns violation for each unsatisfied require
-      - Collects all violations, does not short-circuit
-
+    description: Evaluate all rules against a source/target module pair and return any violations.
   evaluate:
     kind: function
-    description: "Evaluates a boolean DSL expression against an EvalContext, supporting AND/OR/NOT, comparisons, and method calls"
-    type_constraints:
-      - "equals(param(expr), str)"
-      - "fallible(return)"
-    ensures:
-      - Evaluates boolean expressions
-      - Supports AND, OR, NOT operators
-      - Supports ==, != comparisons
-      - Supports property access (source.X, target.X)
-      - Supports can_depend_on method calls
-      - Returns true for "true", false for "false"
-
-depends_on:
-  - src/spec.rs
-
-external_deps:
-  - serde
-
-forbidden_deps:
-  - syn           # rules module doesn't parse code
-  - regex         # DSL uses hand-written parser
-  - anyhow        # uses Result<T, String> for simplicity
-
-invariants:
-  - "evaluate() handles malformed expressions gracefully"
-  - "Built-in rules use the same DSL as custom rules"
-  - "Rules are evaluated in order"
-  - "All violations are collected, not short-circuited"
-  - "No unsafe code"
+    description: Evaluate a rule expression string against a source/target module pair context.
+  EvalContext:
+    kind: type
+    description: Context bundle holding source module, target module, and layer config for rule evaluation.
+  RuleViolation:
+    kind: type
+    description: A detected rule violation with rule name, message, and severity.
+owns_state:
+  - Rule
+  - Severity
+  - RulesConfig
+  - LayersInput
+  - LayerDepsInput
+  - EvalContext
+  - RuleViolation

@@ -1,65 +1,20 @@
-# Spec Checker - Extractors module
-# Inherits: language=rust, context=core, stability=stable (root)
-# Inherits: layer=infrastructure, forbidden_deps=[clap, colored] (extractors)
-
 module: extractors
-description: "Dispatcher for language-specific source code extractors, providing the Extractor trait and ExtractedModule output type"
+description: "Language-agnostic extraction interface that turns source files into a uniform ExtractedModule representation"
+language: rust
 source_path: src/extractors/mod.rs
-
+source_hash: 739497d53c404d6b
+layer: infrastructure
 exposes:
-  Extractor:
-    kind: type
-    description: "Trait for language-specific extractors that parse source files into ExtractedModule"
-    ensures:
-      - Trait for language-specific extractors
-      - Single method extract() returning Result<ExtractedModule>
-
   ExtractedModule:
     kind: type
-    description: "Structured output from extraction: public/private functions, imports, events, state variables, and rich type/function info"
-    type_constraints:
-      - "is_product(Self)"
-      - "cloneable"
-      - "has_field(Self, name)"
-      - "has_field(Self, language)"
-      - "has_field(Self, source_path)"
-      - "has_field(Self, public_functions)"
-      - "has_field(Self, private_functions)"
-      - "has_field(Self, function_signatures)"
-      - "has_field(Self, imports)"
-      - "has_field(Self, events)"
-      - "has_field(Self, state_variables)"
-      - "has_field(Self, modifiers)"
-      - "has_field(Self, type_definitions)"
-      - "has_field(Self, function_info)"
-
+    description: "Uniform container for all information extracted from a source file"
+  Extractor:
+    kind: type
+    description: "Trait that language-specific parsers implement to produce an ExtractedModule"
   get_extractor:
     kind: function
-    description: "Returns the appropriate language extractor for the given language name or alias"
-    type_constraints:
-      - "equals(param(language), str)"
-      - "fallible(return)"
-    requires:
-      - language is one of supported languages or aliases
-    ensures:
-      - Returns RustExtractor for rust/rs
-      - Returns SolidityExtractor for solidity/sol
-      - Returns Flow9Extractor for flow9/flow
-      - Returns error for unsupported language
-
-depends_on:
-  - src/extractors/solidity.rs
-  - src/extractors/rust.rs
-
-external_deps:
-  - anyhow
-  - flow9
-
+    description: "Factory that returns the appropriate language-specific Extractor for a given language string"
 forbidden_deps:
-  - serde_yaml    # no YAML parsing
-
-invariants:
-  - "Extractors never modify source files"
-  - "Extraction is deterministic for same input"
-  - "Failed extraction returns error, never panics"
-  - "No unsafe code"
+  - checker     # extractors sit below application logic
+  - ai_init
+  - ai_refine

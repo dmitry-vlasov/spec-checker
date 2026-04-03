@@ -1,43 +1,41 @@
-# Spec Checker - Main CLI module
-# Inherits: language=rust (root)
-# Overrides: context=cli, stability=normal, layer=interface
-
 module: main
-description: "CLI entry point: parses commands (check, init, diff, toposort) and orchestrates spec-checker operations"
+description: >-
+  CLI entry point that parses commands and dispatches to check, init, refine,
+  diff, toposort, deps, and init-skill workflows.
+language: rust
 source_path: src/main.rs
-
+source_hash: 0e5a50b3749d3ab4
 layer: interface
-context: cli
-stability: normal
-
-# No public functions - main() is the entry point but not pub fn
-# CLI is exposed via clap derive macros on Cli struct
-exposes: {}
-
-depends_on:
-  - src/checker.rs
-  - src/extractors/mod.rs
-  - src/spec.rs
-  - src/rules.rs
-  - src/behavioral.rs
-
-external_deps:
-  - clap
-  - serde_yaml
-  - anyhow
-  - colored
-  - glob
-  - tokio
-
+exposes:
+  Commands:
+    kind: variable
+    description: >-
+      CLI subcommands: check, init, refine, diff, toposort, deps, init-skill.
+  Cli:
+    kind: variable
+    description: Top-level clap CLI parser.
+  ProjectConfig:
+    kind: variable
+    description: Deserialized project configuration from .spec-checker.yaml.
+  DependencyEntry:
+    kind: variable
+    description: A single dependency declaration in project config.
+  LlmFileConfig:
+    kind: variable
+    description: LLM settings section of the project config file.
+  ProviderFileConfig:
+    kind: variable
+    description: Named LLM provider entry in the project config file.
 forbidden_deps:
-  - tempfile     # test-only dependency
-  - syn          # should go through extractors
-  - regex        # should go through extractors
-
-invariants:
-  - "CLI always returns exit code 1 on validation errors"
-  - "All output goes to stdout (errors to stderr)"
-  - "No unsafe code"
-  - "check output tags every result with [kind|tier]"
-  - "Composition checks run automatically when multiple specs loaded"
-  - "Subsystem checks run automatically when .subsystem.yaml files found"
+  - smt
+  - type_formula
+  - types
+  - extractors
+owns_state:
+  - VERSION
+  - Cli
+  - Commands
+  - ProjectConfig
+  - DependencyEntry
+  - LlmFileConfig
+  - ProviderFileConfig

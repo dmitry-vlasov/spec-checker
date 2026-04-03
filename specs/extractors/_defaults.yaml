@@ -1,5 +1,0 @@
-# Defaults for all extractor modules
-layer: infrastructure
-forbidden_deps:
-  - clap
-  - colored

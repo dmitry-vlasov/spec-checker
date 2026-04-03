@@ -1,38 +1,19 @@
-# Spec Checker - Solidity Extractor
-# Inherits: language=rust, context=core, stability=stable (root)
-# Inherits: layer=infrastructure, forbidden_deps=[clap, colored] (extractors)
-
 module: solidity
-description: "Extracts module structure from Solidity source files using solc AST or regex fallback"
+description: "Solidity source extractor with solc AST parsing and regex fallback"
+language: rust
 source_path: src/extractors/solidity.rs
-
+source_hash: ffea1badb1317d26
+layer: infrastructure
 exposes:
   SolidityExtractor:
     kind: type
-    description: "Solidity-specific extractor with dual-mode parsing: solc AST when available, regex fallback otherwise"
-    type_constraints:
-      - "is_product(Self)"
-
+    description: "Extracts public functions, types, events, and state from Solidity contracts"
   SolidityExtractor.new:
     kind: function
     description: "Creates a new SolidityExtractor instance"
-    type_constraints:
-      - "equals(return, Self)"
-
-depends_on: []
-
-external_deps:
-  - anyhow
-  - serde
-  - serde_json
-  - regex         # fallback when solc unavailable
-
 forbidden_deps:
-  - syn           # Rust-specific
-  - serde_yaml    # no YAML parsing
-
-invariants:
-  - "Uses solc AST when available, regex as fallback"
-  - "Extracts: functions, events, imports, state variables, modifiers"
-  - "Identifies visibility: public, external, internal, private"
-  - "No unsafe code"
+  - checker
+  - ai_init
+  - ai_refine
+  - rust
+  - flow9

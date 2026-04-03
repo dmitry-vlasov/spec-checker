@@ -1,0 +1,17 @@
+module: flow9_parser
+description: "Recursive-descent parser for Flow9 source code"
+language: rust
+source_path: src/extractors/flow9_parser.rs
+source_hash: 1e94feb64587e1ec
+layer: infrastructure
+exposes:
+  parse_flow9_source:
+    kind: function
+    description: "Parses Flow9 source text into a Flow9Module AST"
+forbidden_deps:
+  - checker
+  - ai_init
+  - ai_refine
+  - types
+  - rust
+  - solidity

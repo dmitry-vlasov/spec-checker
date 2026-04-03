@@ -1,139 +1,90 @@
-# Spec Checker - Behavioral checker module
-# Inherits: language=rust, context=core, stability=stable (root)
-
 module: behavioral
-description: "Behavioral invariant checker: classifies invariants into static (pattern-matched) and behavioral (LLM-verified) tiers"
+description: "Three-tier invariant verification: classifies spec invariants into static-checkable vs behavioral, runs pattern-based static checks, and delegates behavioral checks to an LLM with caching."
+language: rust
 source_path: src/behavioral.rs
-
-layer: application
-
+source_hash: 46f6fdfefaead876
+layer: infrastructure
 exposes:
-  InvariantTier:
-    kind: type
-    description: "Tier of invariant checking: Static (code pattern matching) or Behavioral (LLM comprehension)"
-    type_constraints:
-      - "is_sum(Self)"
-      - "has_variant(Self, Static)"
-      - "has_variant(Self, Behavioral)"
-
-  ClassifiedInvariant:
-    kind: type
-    description: "An invariant classified by tier and annotated with its source module and path"
-    type_constraints:
-      - "is_product(Self)"
-      - "cloneable"
-      - "has_field(Self, text)"
-      - "has_field(Self, tier)"
-
-  InvariantResult:
-    kind: type
-    description: "Result of checking a single invariant: satisfies flag, reasoning text, and verification tier"
-    type_constraints:
-      - "is_product(Self)"
-      - "serializable"
-      - "has_field(Self, satisfies)"
-      - "has_field(Self, reasoning)"
-      - "has_field(Self, tier)"
-
-  LlmCheckMode:
-    kind: type
-    description: "Controls LLM behavioral checking: Off, DryRun (classify only), CachedOnly, or Full"
-    type_constraints:
-      - "is_sum(Self)"
-      - "has_variant(Self, Off)"
-      - "has_variant(Self, DryRun)"
-      - "has_variant(Self, CachedOnly)"
-      - "has_variant(Self, Full)"
-
-  BehavioralSummary:
-    kind: type
-    description: "Aggregate summary of behavioral check results: static/LLM pass/fail counts, cached, skipped, and failure details"
-    type_constraints:
-      - "is_product(Self)"
-      - "has_field(Self, static_passed)"
-      - "has_field(Self, static_failed)"
-      - "has_field(Self, llm_passed)"
-      - "has_field(Self, llm_failed)"
-      - "has_field(Self, cached)"
-      - "has_field(Self, skipped)"
-      - "has_field(Self, failures)"
-
   classify_invariant:
     kind: function
-    description: "Classifies an invariant text as Static or Behavioral based on keyword patterns"
-    type_constraints:
-      - "equals(param(text), str)"
-      - "equals(return, InvariantTier)"
-    ensures:
-      - Classifies "never panics" and "no panic" as Static
-      - Classifies "no unwrap" and "no unsafe" as Static
-      - Everything else classified as Behavioral
-
-  collect_invariants:
-    kind: function
-    description: "Gathers all module-level invariants and function-level requires/ensures from a spec, classified by tier"
-    type_constraints:
-      - "equals(param(spec), ModuleSpec)"
-      - "equals(con(return), Vec)"
-    ensures:
-      - Collects module-level invariants
-      - Collects function-level requires and ensures
-
+    description: "Classify an invariant text as statically checkable or requiring LLM behavioral verification."
   check_static_invariant:
     kind: function
-    description: "Attempts to verify an invariant via static code patterns; returns None if unrecognized"
-    ensures:
-      - Returns Some result for invariants matching static patterns
-      - Returns None for unrecognized invariant text
-      - Delegates to check_no_panics, check_no_unwrap, check_no_unsafe
-      - Source code is pre-processed to strip test modules and string literals
-
+    description: "Run pattern-based static checks on an invariant that does not require LLM comprehension."
+  collect_invariants:
+    kind: function
+    description: "Gather all module-level and function-level invariants from a spec, classified by verification tier."
   check_behavioral:
     kind: function
-    description: "Orchestrates behavioral checking: routes static invariants to pattern matchers, behavioral ones through LLM with caching"
-    ensures:
-      - Routes static invariants to pattern matchers
-      - Routes behavioral invariants through LLM check mode
-      - Respects cache for LLM results
-      - Skips LLM calls when mode is Off or DryRun
-
+    description: "Orchestrate full behavioral checking for a module: static checks, cache lookups, and LLM calls."
+  llm_verify:
+    kind: function
+    description: "Call an LLM API to verify whether source code satisfies a single invariant."
+  estimate_tokens:
+    kind: function
+    description: "Rough token-count estimate for an invariant verification prompt."
   strip_tests:
     kind: function
-    description: "Removes #[cfg(test)] module blocks from source code before static analysis"
-    type_constraints:
-      - "equals(param(source), str)"
-      - "equals(return, String)"
-    ensures:
-      - Removes #[cfg(test)] module blocks
-      - Preserves non-test code unchanged
-
+    description: "Remove test modules from source code to avoid false positives in static checks."
   cache_key:
     kind: function
-    description: "Generates a deterministic SHA256 cache key from source code and invariant text"
-    type_constraints:
-      - "equals(return, String)"
-    ensures:
-      - Deterministic for same inputs
-      - Uses SHA256
-
-depends_on:
-  - src/spec.rs
-  - src/extractors/mod.rs
-
-external_deps:
-  - sha2
-  - reqwest
-  - serde_json
-  - tokio
-
+    description: "Compute a deterministic SHA-256 cache key from source code and invariant text."
+  read_cache:
+    kind: function
+    description: "Load a cached LLM verification result from disk, if present."
+  write_cache:
+    kind: function
+    description: "Persist an LLM verification result to the on-disk cache."
+  InvariantTier:
+    kind: type
+    description: "Whether an invariant is verifiable statically or requires LLM behavioral analysis."
+  ClassifiedInvariant:
+    kind: type
+    description: "An invariant paired with its verification tier and owning module metadata."
+  InvariantResult:
+    kind: type
+    description: "Outcome of verifying a single invariant: pass/fail plus reasoning."
+  CachedResult:
+    kind: type
+    description: "Serializable cached LLM verification result with provenance metadata."
+  BehavioralSummary:
+    kind: type
+    description: "Aggregate pass/fail/skip counts and failure details from a behavioral check run."
+  LlmCheckMode:
+    kind: type
+    description: "Operational mode for LLM checks: off, dry-run, cached-only, or full."
+  LlmProvider:
+    kind: type
+    description: "Supported LLM API providers: Anthropic or OpenAI-compatible."
+  LlmConfig:
+    kind: type
+    description: "Resolved configuration for LLM endpoint, model, credentials, and operational parameters."
+  LlmConfig.detect_provider:
+    kind: function
+    description: "Infer the LLM provider from an endpoint URL."
+  LlmConfig.resolve_api_key:
+    kind: function
+    description: "Resolve the API key from config or environment variables based on provider."
+  LlmConfig.api_url:
+    kind: function
+    description: "Build the full chat/messages API URL for the configured provider."
+  LlmConfig.is_ollama:
+    kind: function
+    description: "Check whether the endpoint targets a local Ollama instance."
 forbidden_deps:
-  - clap
-  - colored
-  - syn
-
-invariants:
-  - "LLM results are always cached after first call"
-  - "Cache keys are deterministic (SHA256 of code + invariant)"
-  - "Static checks never call LLM"
-  - "LLM results have tier field set to 'llm-verified'"
-  - "No unsafe code"
+  - extractors
+  - main
+  - ai_init
+  - ai_refine
+owns_state:
+  - InvariantTier
+  - ClassifiedInvariant
+  - InvariantResult
+  - CachedResult
+  - LlmCheckMode
+  - LlmProvider
+  - LlmConfig
+  - LlmResponse
+  - BehavioralSummary
+  - DEFAULT_LOCAL_LLM_COOLDOWN_SECS
+  - DEFAULT_OLLAMA_NUM_CTX
