@@ -1,78 +1,116 @@
 # Spec Init
 
-You are tasked with initializing specifications for a project that uses **spec-checker**. You will create lean, intent-focused spec files from source code.
+You are tasked with creating enriched, intent-focused specifications for a project that uses **spec-checker**. Your main job is to **read source code and write meaningful specs** — not just generate mechanical skeletons.
 
 ## Arguments
 
-$ARGUMENTS — Optional: a source file or directory path (e.g., `src/` or `src/checker.rs`). If omitted, process the entire project.
+$ARGUMENTS — Optional: a source file or directory path. If omitted, process the entire project.
 
-## Step 1: Generate lean skeletons
+## Step 1: Generate skeletons (if needed)
 
-Run `spec-checker init <source>` (without `--ai`) to create mechanical skeletons:
+If specs don't exist yet, run `spec-checker init .` to create mechanical skeletons. If specs already exist, skip this step.
 
-```bash
-spec-checker init .
-```
+## Step 2: Enrich each spec (THIS IS THE MAIN WORK)
 
-This produces `.spec.yaml` files with just entity names and kinds — no descriptions, no invariants.
+Get processing order: `spec-checker toposort ./specs`
 
-## Step 2: Get processing order
-
-Run `spec-checker toposort ./specs` to get the dependency-ordered list of spec files. Process leaf dependencies first so you can use their specs as context for downstream modules.
-
-If a single file was provided as argument, only process that file's spec.
-
-## Step 3: Enrich each spec
-
-For each spec file (in dependency order):
+Then for EACH spec file, in dependency order:
 
 1. **Read the source file** (from `source_path` in the spec)
-2. **Read the lean skeleton spec**
-3. **Read already-enriched dependency specs** for context on the module's role
-4. **Enrich the spec** with:
+2. **Read the current spec**
+3. **Rewrite the spec** with enrichments (see below)
+4. **Update source_hash**: `sha256sum <source-file> | cut -c1-16`
+5. **Write the enriched spec** back
+6. **Report progress**
 
-### Module description
-One sentence describing what this module is FOR (its purpose/role), not what it contains.
+### What to add
 
-### API curation
-Review the `exposes` list. Remove internal helpers that happen to be public — keep only entities that form the module's **intended public API contract**. Add a one-line `description` to each retained entity.
+**Module description** — One sentence about what this module is FOR (purpose/role), not what it contains.
 
-### Forbidden dependencies
-Add `forbidden_deps` — dependencies this module should NEVER have, based on its architectural role. Think separation of concerns. Only suggest deps that would be a clear violation. Add a YAML comment with the reason:
+**API curation** — Review `exposes`. Remove internal helpers that happen to be public. Keep only the intended public API. Add a one-line `description` to each retained entity.
+
+**Forbidden dependencies** — Add `forbidden_deps` for clear architectural violations:
 ```yaml
 forbidden_deps:
   - clap       # CLI concerns belong in main
   - syn        # AST parsing belongs in extractors
 ```
 
-### Layer classification
-Set `layer` to one of: `infrastructure`, `domain`, `application`, `interface`.
-- infrastructure = external I/O, persistence, third-party integrations
-- domain = core business logic, data structures
-- application = orchestration, coordination
-- interface = user-facing CLI, API endpoints
+**Layer** — Set to `infrastructure` (I/O, persistence), `domain` (core logic), `application` (orchestration), or `interface` (user-facing).
 
-5. **Update source_hash**:
-   ```bash
-   sha256sum <source-file> | cut -c1-16
-   ```
-6. **Write the enriched spec** back
-7. **Report progress** — tell the user which file you completed
+### Before/after example
 
-## Step 4: Validate
+**BEFORE** (mechanical skeleton — NOT acceptable as final output):
+```yaml
+module: cache
+language: rust
+source_path: src/cache.rs
+source_hash: a1b2c3d4
+exposes:
+  CacheEntry:
+    kind: type
+  Cache:
+    kind: type
+  Cache.new:
+    kind: function
+  Cache.get:
+    kind: function
+  Cache.set:
+    kind: function
+  Cache.invalidate:
+    kind: function
+  compute_key:
+    kind: function
+  format_entry:
+    kind: function
+```
 
-Run `spec-checker check .` and fix any errors.
+**AFTER** (enriched — THIS is what you should produce):
+```yaml
+module: cache
+description: "Content-addressed cache with SHA256 keys and TTL-based expiration"
+language: rust
+source_path: src/cache.rs
+source_hash: a1b2c3d4
+layer: infrastructure
+exposes:
+  Cache:
+    kind: type
+    description: "Thread-safe LRU cache with configurable size limit and TTL"
+  Cache.new:
+    kind: function
+    description: "Creates a cache with the given capacity and TTL settings"
+  Cache.get:
+    kind: function
+    description: "Retrieves a cached value by key, returning None if expired or missing"
+  Cache.set:
+    kind: function
+    description: "Stores a value with automatic key computation and timestamp"
+  Cache.invalidate:
+    kind: function
+    description: "Removes all entries matching a predicate"
+forbidden_deps:
+  - cli        # cache is infrastructure, not user-facing
+  - checker    # cache should not depend on application logic
+```
+
+Note what changed: `compute_key` and `format_entry` removed (internal helpers). `CacheEntry` removed (implementation detail). Descriptions added to every entity. Layer and forbidden_deps set.
 
 ## What NOT to do
 
-- Do NOT add `type_constraints` that mirror struct fields or function signatures — these are derivable from code
+- Do NOT leave specs as bare skeletons (just kind + name) — that's the BEFORE, not the AFTER
+- Do NOT add `type_constraints` mirroring struct fields or function signatures
 - Do NOT add `depends_on` or `external_deps` — derivable from source
-- Do NOT add `invariants`, `requires`, `ensures`, `modifies` — these are behavioral, handled by `/spec-refine`
-- Do NOT restate what the type system already guarantees
+- Do NOT add `invariants`, `requires`, `ensures`, `modifies` — those are for `/spec-refine`
+
+## Step 3: Validate
+
+Run `spec-checker check .` and fix any errors.
 
 ## Quality guidelines
 
 - **Intent over structure** — specs describe what the module is FOR, not what it contains
-- **Curate aggressively** — 5 well-chosen API entities beat 20 that mirror `pub` items
-- **Be specific** — "Orchestrates verification passes against specs" is better than "Main checker module"
+- **Curate aggressively** — 5 well-chosen API entities beat 20 that mirror public items
+- **Be specific** — "Orchestrates verification passes against specs" beats "Main checker module"
 - **Use domain language** — match terminology from the code
+- **Every spec must have**: description, layer, and at least one curated expose with description
