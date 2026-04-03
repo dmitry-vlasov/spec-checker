@@ -18,10 +18,11 @@ Then for EACH spec file, in dependency order:
 
 1. **Read the source file** (from `source_path` in the spec)
 2. **Read the current spec**
-3. **Rewrite the spec** with enrichments (see below)
-4. **Update source_hash**: `sha256sum <source-file> | cut -c1-16`
-5. **Write the enriched spec** back
-6. **Report progress**
+3. **Check if enrichment is needed**: A spec is NOT enriched if it lacks a `description:` field at module level, or if its `exposes` entries have no `description:` fields. A skeleton with just `kind: function` is NOT enriched — it MUST be rewritten.
+4. **Rewrite the spec** by adding all enrichment fields (see below). You MUST add `description`, `layer`, entity descriptions, and `forbidden_deps`.
+5. **Update source_hash**: `sha256sum <source-file> | cut -c1-16`
+6. **Write the enriched spec** back
+7. **Report progress**
 
 ### What to add
 
@@ -114,3 +115,4 @@ Run `spec-checker check .` and fix any errors.
 - **Be specific** — "Orchestrates verification passes against specs" beats "Main checker module"
 - **Use domain language** — match terminology from the code
 - **Every spec must have**: description, layer, and at least one curated expose with description
+- **Verify your own work**: after writing a spec, re-read it and confirm it has a `description:` field at module level AND `description:` on each exposed entity. If not, you haven't finished that spec.
