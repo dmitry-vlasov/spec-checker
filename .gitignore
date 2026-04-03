@@ -4,5 +4,6 @@ Cargo.lock
 *.swo
 .DS_Store
 .spec-cache/
+.claude/commands/
 .spec-checker.yaml
 flow9.md
