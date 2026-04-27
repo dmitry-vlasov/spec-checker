@@ -310,7 +310,7 @@ Analyze this module and produce a JSON object with these fields:
 
 3. "forbidden_deps": Array of objects {{"dep": "...", "reason": "..."}} — dependencies this module should NEVER have, based on its architectural role. Think about separation of concerns. Only suggest deps that would be a clear architectural violation.
 
-4. "layer": One of "infrastructure", "domain", "application", "interface", or null if unclear. Based on the module's role: infrastructure=external I/O, domain=core business logic, application=orchestration, interface=user-facing.
+4. "layer": One of "infrastructure", "domain", "application", "presentation", or null if unclear. Based on the module's role: infrastructure=external I/O, domain=core business logic, application=orchestration, presentation=user-facing CLI/API endpoints.
 
 Respond with ONLY a JSON object, no other text.{no_think}"#
     )

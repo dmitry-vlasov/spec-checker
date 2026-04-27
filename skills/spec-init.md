@@ -37,7 +37,7 @@ forbidden_deps:
   - syn        # AST parsing belongs in extractors
 ```
 
-**Layer** — Set to `infrastructure` (I/O, persistence), `domain` (core logic), `application` (orchestration), or `interface` (user-facing).
+**Layer** — Set to `infrastructure` (I/O, persistence), `domain` (core logic), `application` (orchestration), or `presentation` (user-facing CLI, API endpoints).
 
 ### Before/after example
 

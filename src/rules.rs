@@ -310,9 +310,9 @@ pub fn builtin_rules() -> Vec<Rule> {
         },
         Rule {
             name: "context-isolation".to_string(),
-            description: Some("Cross-context dependencies must go through Interface layer".to_string()),
+            description: Some("Cross-context dependencies must go through Presentation layer".to_string()),
             when: "source.context.exists AND target.context.exists AND source.context != target.context".to_string(),
-            require: "source.layer == interface OR target.layer == interface".to_string(),
+            require: "source.layer == presentation OR target.layer == presentation".to_string(),
             severity: Severity::Error,
         },
         Rule {
@@ -482,7 +482,7 @@ mod tests {
 
     #[test]
     fn test_evaluate_logical_ops() {
-        let source = make_spec("a", Some(Layer::new("interface")), Some("x"), None);
+        let source = make_spec("a", Some(Layer::new("presentation")), Some("x"), None);
         let target = make_spec("b", Some(Layer::new("domain")), Some("y"), None);
         let lc = builtin_layer_config();
         let ctx = EvalContext {
@@ -492,7 +492,7 @@ mod tests {
         };
 
         assert!(evaluate(
-            "source.layer == interface OR target.layer == interface",
+            "source.layer == presentation OR target.layer == presentation",
             &ctx
         )
         .unwrap());

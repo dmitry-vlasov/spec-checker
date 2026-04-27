@@ -1958,19 +1958,19 @@ contract Bridge {
     }
 
     #[test]
-    fn test_check_context_via_interface() {
+    fn test_check_context_via_presentation() {
         let dir = TempDir::new().unwrap();
 
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
         std::fs::write(dir.path().join("src/payments_api.rs"), "pub fn pay() {}").unwrap();
         std::fs::write(dir.path().join("src/users_api.rs"), "pub fn api() {}").unwrap();
 
-        // Payments interface depending on Users interface (allowed - both at interface layer)
+        // Payments presentation depending on Users presentation (allowed - both at presentation layer)
         let payments_api_spec = ModuleSpec {
             module: "payments_api".to_string(),
             language: Some("rust".to_string()),
             source_path: Some("src/payments_api.rs".to_string()),
-            layer: Some(Layer::new("interface")),
+            layer: Some(Layer::new("presentation")),
             context: Some("payments".to_string()),
             depends_on: vec!["src/users_api.rs".to_string()],
             ..Default::default()
@@ -1980,7 +1980,7 @@ contract Bridge {
             module: "users_api".to_string(),
             language: Some("rust".to_string()),
             source_path: Some("src/users_api.rs".to_string()),
-            layer: Some(Layer::new("interface")),
+            layer: Some(Layer::new("presentation")),
             context: Some("users".to_string()),
             ..Default::default()
         };
@@ -1992,7 +1992,7 @@ contract Bridge {
 
         assert!(
             result.is_ok(),
-            "Cross-context via interface should be allowed but got: {:?}",
+            "Cross-context via presentation should be allowed but got: {:?}",
             result.errors
         );
     }

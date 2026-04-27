@@ -7,8 +7,12 @@ The spec-checker enforces three orthogonal architectural constraints.
 The default 4-layer model:
 
 ```
-Interface → Application → Domain → Infrastructure
+Presentation → Application → Domain → Infrastructure
 ```
+
+Higher layers depend on lower layers, never the reverse. **Presentation** is the user-facing entry point (CLI, HTTP handlers, API endpoints). **Application** orchestrates domain logic and infrastructure. **Domain** holds core business rules and data structures. **Infrastructure** handles external I/O (databases, file systems, third-party APIs).
+
+Note: this is *not* the same as an OOP "interface" (a public contract). A presentation-layer module is a top-level entry point, not a leaf abstraction.
 
 ### Custom Layers
 
@@ -44,7 +48,7 @@ Bounded contexts isolate different functional areas:
 context: payments   # or: users, bridge, verifier
 ```
 
-**Rule**: Cross-context dependencies must go through the Interface layer.
+**Rule**: Cross-context dependencies must go through the Presentation layer.
 
 ## Stability (Change Frequency)
 

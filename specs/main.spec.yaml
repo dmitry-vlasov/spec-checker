@@ -5,7 +5,7 @@ description: >-
 language: rust
 source_path: src/main.rs
 source_hash: 0e5a50b3749d3ab4
-layer: interface
+layer: presentation
 exposes:
   Commands:
     kind: variable

@@ -2,7 +2,7 @@ module: spec
 description: Core data model for module, subsystem, and layer specifications — the schema that all other modules produce or consume.
 language: rust
 source_path: src/spec.rs
-source_hash: 463db0c171e8f628
+source_hash: ace0731eba568778
 layer: domain
 forbidden_deps:
   - src/main.rs
@@ -42,7 +42,7 @@ exposes:
     description: DAG of allowed inter-layer dependencies used by rule evaluation.
   LayerConfig.builtin:
     kind: function
-    description: Return the default four-layer model (infrastructure, domain, application, interface).
+    description: Return the default four-layer model (infrastructure, domain, application, presentation).
   LayerConfig.from_linear:
     kind: function
     description: Build a LayerConfig from an ordered list where each layer may depend on all layers below it.

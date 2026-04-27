@@ -401,7 +401,7 @@ impl LayerConfig {
                 .collect(),
         );
         allowed.insert(
-            "interface".into(),
+            "presentation".into(),
             ["application", "domain", "infrastructure"]
                 .into_iter()
                 .map(String::from)
@@ -789,7 +789,7 @@ mod tests {
         let mut spec = ModuleSpec {
             module: "test".to_string(),
             language: Some("solidity".to_string()),
-            layer: Some(Layer::new("interface")),
+            layer: Some(Layer::new("presentation")),
             ..Default::default()
         };
 
@@ -797,7 +797,7 @@ mod tests {
 
         // Spec's own values are preserved
         assert_eq!(spec.language, Some("solidity".to_string()));
-        assert_eq!(spec.layer, Some(Layer::new("interface")));
+        assert_eq!(spec.layer, Some(Layer::new("presentation")));
     }
 
     #[test]
@@ -838,25 +838,25 @@ mod tests {
         assert!(config.can_depend_on("infrastructure", "infrastructure"));
         assert!(!config.can_depend_on("infrastructure", "domain"));
         assert!(!config.can_depend_on("infrastructure", "application"));
-        assert!(!config.can_depend_on("infrastructure", "interface"));
+        assert!(!config.can_depend_on("infrastructure", "presentation"));
 
         // Domain can depend on itself and infrastructure
         assert!(config.can_depend_on("domain", "infrastructure"));
         assert!(config.can_depend_on("domain", "domain"));
         assert!(!config.can_depend_on("domain", "application"));
-        assert!(!config.can_depend_on("domain", "interface"));
+        assert!(!config.can_depend_on("domain", "presentation"));
 
         // Application can depend on domain and infrastructure
         assert!(config.can_depend_on("application", "infrastructure"));
         assert!(config.can_depend_on("application", "domain"));
         assert!(config.can_depend_on("application", "application"));
-        assert!(!config.can_depend_on("application", "interface"));
+        assert!(!config.can_depend_on("application", "presentation"));
 
-        // Interface can depend on anything
-        assert!(config.can_depend_on("interface", "infrastructure"));
-        assert!(config.can_depend_on("interface", "domain"));
-        assert!(config.can_depend_on("interface", "application"));
-        assert!(config.can_depend_on("interface", "interface"));
+        // Presentation can depend on anything
+        assert!(config.can_depend_on("presentation", "infrastructure"));
+        assert!(config.can_depend_on("presentation", "domain"));
+        assert!(config.can_depend_on("presentation", "application"));
+        assert!(config.can_depend_on("presentation", "presentation"));
     }
 
     #[test]
